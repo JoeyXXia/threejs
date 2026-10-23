@@ -1,0 +1,23 @@
+:root { font-family: Inter, "Microsoft YaHei", system-ui, sans-serif; color: #172c38; background: #f3f5f3; font-synthesis: none; line-height: 1.65; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { max-width: 1120px; padding: 32px 36px 40px; margin: auto; }
+header { display: flex; justify-content: space-between; gap: 16px; padding-bottom: 24px; border-bottom: 1px solid #d1dad5; font-size: 12px; letter-spacing: .08em; }
+.brand { font-weight: 800; }
+.eyebrow { margin-top: 64px; color: #337b66; font-size: 13px; letter-spacing: .15em; }
+h1 { font-size: clamp(36px, 5.5vw, 64px); line-height: 1.25; letter-spacing: -.04em; margin: 20px 0; }
+.intro { max-width: 620px; color: #52646b; }
+.connection { display: flex; align-items: center; gap: 24px; margin: 30px 0 48px; }
+[data-connection="online"] { color: #1b7054; }
+[data-connection="offline"] { color: #9a401f; }
+button { padding: 9px 16px; border: 1px solid #667c75; border-radius: 6px; background: transparent; color: inherit; cursor: pointer; font: inherit; font-size: 13px; }
+button:hover { background: #e0e9e3; }
+button:focus-visible { outline: 3px solid #337b66; outline-offset: 3px; }
+.modules { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid #d1dad5; gap: 24px; }
+article { padding-top: 24px; }
+small { color: #337b66; font-size: 11px; letter-spacing: .05em; }
+h2 { font-size: 19px; margin: 12px 0; }
+article p, footer { color: #52646b; font-size: 13px; }
+footer { margin-top: 56px; border-top: 1px solid #d1dad5; padding-top: 20px; }
+@media (max-width: 760px) { .modules { grid-template-columns: repeat(2, 1fr); } main { padding: 24px; } }
+@media (max-width: 430px) { .modules { grid-template-columns: 1fr; } header, .connection { flex-wrap: wrap; } }
