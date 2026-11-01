@@ -1,0 +1,28 @@
+{
+  "description": "Self-authored synthetic warehouse, not a real facility or robot map",
+  "version": 1,
+  "width": 30,
+  "depth": 20,
+  "cellSize": 1,
+  "originX": 0,
+  "originZ": 0,
+  "zones": [
+    { "code": "IN", "kind": "INBOUND", "gridX": 0, "gridZ": 0, "sizeX": 3, "sizeZ": 3 },
+    { "code": "QC", "kind": "QC", "gridX": 0, "gridZ": 4, "sizeX": 3, "sizeZ": 3 },
+    { "code": "ST", "kind": "STORAGE", "gridX": 3, "gridZ": 2, "sizeX": 16, "sizeZ": 10 },
+    { "code": "PK", "kind": "PICKING", "gridX": 22, "gridZ": 2, "sizeX": 3, "sizeZ": 4 },
+    { "code": "OUT", "kind": "OUTBOUND", "gridX": 26, "gridZ": 2, "sizeX": 3, "sizeZ": 4 },
+    { "code": "CH", "kind": "CHARGING", "gridX": 0, "gridZ": 15, "sizeX": 3, "sizeZ": 3 }
+  ],
+  "racks": [
+    { "code": "R01", "zone": "ST", "gridX": 6, "gridZ": 4, "sizeX": 1, "sizeZ": 3, "levels": 2, "levelHeight": 1.5 },
+    { "code": "R02", "zone": "ST", "gridX": 14, "gridZ": 4, "sizeX": 1, "sizeZ": 3, "levels": 2, "levelHeight": 1.5 }
+  ],
+  "stations": [
+    { "code": "IN-01", "zone": "IN", "kind": "INBOUND", "gridX": 1, "gridZ": 1, "capacity": 100 },
+    { "code": "QC-01", "zone": "QC", "kind": "QC", "gridX": 1, "gridZ": 5, "capacity": 100 },
+    { "code": "PK-01", "zone": "PK", "kind": "PICKING", "gridX": 23, "gridZ": 3, "capacity": 100 },
+    { "code": "OUT-01", "zone": "OUT", "kind": "OUTBOUND", "gridX": 27, "gridZ": 3, "capacity": 100 },
+    { "code": "CH-01", "zone": "CH", "kind": "CHARGING", "gridX": 1, "gridZ": 16, "capacity": 1 }
+  ]
+}

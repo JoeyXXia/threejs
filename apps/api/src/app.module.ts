@@ -5,9 +5,10 @@ import { AuthService } from './auth/auth.service';
 import { AuthGuard } from './auth/auth.guard';
 import { AuthController } from './auth/auth.controller';
 import { WarehouseController } from './warehouse.controller';
+import { InventoryController } from './inventory.controller';
 
 @Module({
-  controllers: [HealthController, AuthController, WarehouseController],
+  controllers: [HealthController, AuthController, WarehouseController, InventoryController],
   providers: [DatabaseService, AuthService, AuthGuard],
 })
 export class AppModule {}

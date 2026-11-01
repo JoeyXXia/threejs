@@ -132,6 +132,6 @@ export function App() {
         {session.warehouses.length === 0 && <p>当前账户没有获授权仓库。</p>}
       </section>
     </>}
-    <footer>Day 2 仅实现身份、仓库资料与访问边界；尚无库存、3D 场景或机器人运行数据。</footer>
+    <footer>当前页面提供身份与仓库资料；Day 3 已接入布局和库存只读 API，尚无 3D 场景或机器人运行数据。</footer>
   </main>;
 }

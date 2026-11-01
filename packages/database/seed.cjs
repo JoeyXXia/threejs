@@ -1,5 +1,6 @@
 const { PrismaClient } = require('@prisma/client');
 const { randomBytes, scryptSync } = require('node:crypto');
+const { seedInventory } = require('./seed-inventory.cjs');
 
 const ids = {
   spaceA: '10000000-0000-4000-8000-000000000001',
@@ -37,7 +38,9 @@ async function seed(databaseUrl, password) {
           update: {}, create: { userId: user.id, spaceId, warehouseId, role },
         });
       }
-    });
+      await seedInventory(tx, ids.spaceA, ids.warehouseA);
+      await seedInventory(tx, ids.spaceB, ids.warehouseB);
+    }, { timeout: 20000 });
   } finally { await db.$disconnect(); }
 }
 
