@@ -42,7 +42,202 @@ model Warehouse {
   access    WarehouseAccess[]
   auditLogs AuditLog[]
   commands  IdempotencyRecord[]
+  activeLayoutId String? @db.Uuid
+  layouts LayoutVersion[] @relation("WarehouseLayouts")
+  activeLayout LayoutVersion? @relation("ActiveLayout", fields: [spaceId, id, activeLayoutId], references: [spaceId, warehouseId, id], onDelete: Restrict, onUpdate: NoAction)
+  locations Location[]
+  skus Sku[]
   @@unique([spaceId, id])
+}
+
+enum ZoneKind {
+  INBOUND
+  QC
+  STORAGE
+  PICKING
+  OUTBOUND
+  CHARGING
+}
+
+enum LayoutStatus {
+  DRAFT
+  PUBLISHED
+}
+
+enum Quality {
+  HOLD
+  RELEASED
+}
+
+enum MovementKind {
+  OPENING
+  TRANSFER
+}
+
+model LayoutVersion {
+  id String @id @db.Uuid
+  spaceId String @db.Uuid
+  warehouseId String @db.Uuid
+  version Int
+  status LayoutStatus @default(DRAFT)
+  width Int
+  depth Int
+  cellSize Float @default(1)
+  originX Float @default(0)
+  originZ Float @default(0)
+  createdAt DateTime @default(now())
+  warehouse Warehouse @relation("WarehouseLayouts", fields: [spaceId, warehouseId], references: [spaceId, id], onDelete: Restrict)
+  activeFor Warehouse[] @relation("ActiveLayout")
+  zones LayoutZone[]
+  racks Rack[]
+  placements LayoutLocation[]
+  @@unique([spaceId, warehouseId, id])
+  @@unique([spaceId, warehouseId, version])
+}
+
+model LayoutZone {
+  id String @id @db.Uuid
+  spaceId String @db.Uuid
+  warehouseId String @db.Uuid
+  layoutId String @db.Uuid
+  code String
+  kind ZoneKind
+  gridX Int
+  gridZ Int
+  sizeX Int
+  sizeZ Int
+  layout LayoutVersion @relation(fields: [spaceId, warehouseId, layoutId], references: [spaceId, warehouseId, id], onDelete: Restrict)
+  racks Rack[]
+  placements LayoutLocation[]
+  @@unique([spaceId, warehouseId, layoutId, id])
+  @@unique([layoutId, code])
+}
+
+model Rack {
+  id String @id @db.Uuid
+  spaceId String @db.Uuid
+  warehouseId String @db.Uuid
+  layoutId String @db.Uuid
+  zoneId String @db.Uuid
+  code String
+  gridX Int
+  gridZ Int
+  sizeX Int
+  sizeZ Int
+  levels Int
+  levelHeight Float @default(1.5)
+  layout LayoutVersion @relation(fields: [spaceId, warehouseId, layoutId], references: [spaceId, warehouseId, id], onDelete: Restrict)
+  zone LayoutZone @relation(fields: [spaceId, warehouseId, layoutId, zoneId], references: [spaceId, warehouseId, layoutId, id], onDelete: Restrict)
+  placements LayoutLocation[]
+  @@unique([spaceId, warehouseId, layoutId, id])
+  @@unique([layoutId, code])
+}
+
+// Stable business identity; coordinates and capacity live in the layout snapshot.
+model Location {
+  id String @id @db.Uuid
+  spaceId String @db.Uuid
+  warehouseId String @db.Uuid
+  code String
+  kind ZoneKind
+  warehouse Warehouse @relation(fields: [spaceId, warehouseId], references: [spaceId, id], onDelete: Restrict)
+  placements LayoutLocation[]
+  balances InventoryBalance[]
+  movementsFrom InventoryMovement[] @relation("MovementSource")
+  movementsTo InventoryMovement[] @relation("MovementDestination")
+  @@unique([spaceId, warehouseId, id])
+  @@unique([spaceId, warehouseId, code])
+}
+
+model LayoutLocation {
+  spaceId String @db.Uuid
+  warehouseId String @db.Uuid
+  layoutId String @db.Uuid
+  locationId String @db.Uuid
+  zoneId String @db.Uuid
+  rackId String? @db.Uuid
+  gridX Int
+  gridZ Int
+  level Int @default(0)
+  serviceX Int
+  serviceZ Int
+  capacity Int
+  layout LayoutVersion @relation(fields: [spaceId, warehouseId, layoutId], references: [spaceId, warehouseId, id], onDelete: Restrict)
+  location Location @relation(fields: [spaceId, warehouseId, locationId], references: [spaceId, warehouseId, id], onDelete: Restrict)
+  zone LayoutZone @relation(fields: [spaceId, warehouseId, layoutId, zoneId], references: [spaceId, warehouseId, layoutId, id], onDelete: Restrict)
+  rack Rack? @relation(fields: [spaceId, warehouseId, layoutId, rackId], references: [spaceId, warehouseId, layoutId, id], onDelete: Restrict)
+  @@id([layoutId, locationId])
+  @@unique([layoutId, gridX, gridZ, level])
+}
+
+model Sku {
+  id String @id @db.Uuid
+  spaceId String @db.Uuid
+  warehouseId String @db.Uuid
+  code String
+  name String
+  unit String @default("piece")
+  warehouse Warehouse @relation(fields: [spaceId, warehouseId], references: [spaceId, id], onDelete: Restrict)
+  batches Batch[]
+  @@unique([spaceId, warehouseId, id])
+  @@unique([spaceId, warehouseId, code])
+}
+
+model Batch {
+  id String @id @db.Uuid
+  spaceId String @db.Uuid
+  warehouseId String @db.Uuid
+  skuId String @db.Uuid
+  code String
+  expiresAt DateTime?
+  sku Sku @relation(fields: [spaceId, warehouseId, skuId], references: [spaceId, warehouseId, id], onDelete: Restrict)
+  balances InventoryBalance[]
+  movements InventoryMovement[]
+  @@unique([spaceId, warehouseId, skuId, id])
+  @@unique([spaceId, warehouseId, skuId, code])
+}
+
+model InventoryBalance {
+  id String @id @default(uuid()) @db.Uuid
+  spaceId String @db.Uuid
+  warehouseId String @db.Uuid
+  locationId String @db.Uuid
+  skuId String @db.Uuid
+  batchId String @db.Uuid
+  quality Quality
+  onHand Int @default(0)
+  reserved Int @default(0)
+  version Int @default(0)
+  updatedAt DateTime @updatedAt
+  location Location @relation(fields: [spaceId, warehouseId, locationId], references: [spaceId, warehouseId, id], onDelete: Restrict)
+  batch Batch @relation(fields: [spaceId, warehouseId, skuId, batchId], references: [spaceId, warehouseId, skuId, id], onDelete: Restrict)
+  @@unique([spaceId, warehouseId, locationId, skuId, batchId, quality])
+}
+
+// One complete transfer record (source nullable only for an external receipt).
+model InventoryMovement {
+  id String @id @default(uuid()) @db.Uuid
+  spaceId String @db.Uuid
+  warehouseId String @db.Uuid
+  skuId String @db.Uuid
+  batchId String @db.Uuid
+  kind MovementKind
+  sourceLocationId String? @db.Uuid
+  sourceQuality Quality?
+  destinationLocationId String @db.Uuid
+  destinationQuality Quality
+  quantity Int
+  businessKey String
+  actorType String
+  actorId String
+  reason String
+  reference String
+  createdAt DateTime @default(now())
+  batch Batch @relation(fields: [spaceId, warehouseId, skuId, batchId], references: [spaceId, warehouseId, skuId, id], onDelete: Restrict)
+  source Location? @relation("MovementSource", fields: [spaceId, warehouseId, sourceLocationId], references: [spaceId, warehouseId, id], onDelete: Restrict)
+  destination Location @relation("MovementDestination", fields: [spaceId, warehouseId, destinationLocationId], references: [spaceId, warehouseId, id], onDelete: Restrict)
+  @@unique([spaceId, warehouseId, businessKey])
+  @@index([spaceId, warehouseId, createdAt])
 }
 
 model WarehouseAccess {
