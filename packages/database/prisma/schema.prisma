@@ -1,0 +1,102 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  OPERATOR
+  VIEWER
+}
+
+model User {
+  id           String @id @default(uuid()) @db.Uuid
+  email        String @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  sessions     Session[]
+  access       WarehouseAccess[]
+  auditLogs    AuditLog[]
+  commands     IdempotencyRecord[]
+}
+
+model Space {
+  id         String @id @db.Uuid
+  name       String
+  createdAt  DateTime @default(now())
+  warehouses Warehouse[]
+}
+
+model Warehouse {
+  id        String @id @db.Uuid
+  spaceId   String @db.Uuid
+  name      String
+  version   Int @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  space     Space @relation(fields: [spaceId], references: [id], onDelete: Restrict)
+  access    WarehouseAccess[]
+  auditLogs AuditLog[]
+  commands  IdempotencyRecord[]
+  @@unique([spaceId, id])
+}
+
+model WarehouseAccess {
+  userId      String @db.Uuid
+  spaceId     String @db.Uuid
+  warehouseId String @db.Uuid
+  role        Role
+  user        User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  warehouse   Warehouse @relation(fields: [spaceId, warehouseId], references: [spaceId, id], onDelete: Cascade)
+  @@id([userId, spaceId, warehouseId])
+}
+
+model Session {
+  id        String @id @default(uuid()) @db.Uuid
+  tokenHash String @unique
+  userId    String @db.Uuid
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([expiresAt])
+}
+
+model AuditLog {
+  id           String @id @default(uuid()) @db.Uuid
+  spaceId      String @db.Uuid
+  warehouseId  String @db.Uuid
+  actorId      String @db.Uuid
+  actorType    String @default("USER")
+  action       String
+  reason       String
+  requestId    String @db.Uuid
+  correlationId String?
+  before       Json
+  after        Json
+  createdAt    DateTime @default(now())
+  actor        User @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  warehouse    Warehouse @relation(fields: [spaceId, warehouseId], references: [spaceId, id], onDelete: Restrict)
+  @@index([spaceId, warehouseId, createdAt])
+}
+
+// Foundation only. Business command deduplication is implemented with its WMS phase.
+model IdempotencyRecord {
+  id          String @id @default(uuid()) @db.Uuid
+  spaceId     String @db.Uuid
+  warehouseId String @db.Uuid
+  actorId     String @db.Uuid
+  operation   String
+  key         String
+  requestHash String
+  status      String
+  response    Json?
+  createdAt   DateTime @default(now())
+  expiresAt   DateTime?
+  actor       User @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  warehouse   Warehouse @relation(fields: [spaceId, warehouseId], references: [spaceId, id], onDelete: Restrict)
+  @@unique([spaceId, warehouseId, actorId, operation, key])
+}

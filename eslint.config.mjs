@@ -11,6 +11,11 @@ export default tseslint.config(
     languageOptions: { globals: globals.browser },
   },
   {
+    files: ['**/*.cjs'],
+    languageOptions: { globals: { ...globals.node, ...globals.jest } },
+    rules: { '@typescript-eslint/no-require-imports': 'off' },
+  },
+  {
     files: ['**/*.mjs', 'apps/api/**/*.ts', 'apps/web/vite.config.ts'],
     languageOptions: { globals: globals.node },
   },
