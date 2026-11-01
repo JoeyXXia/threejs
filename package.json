@@ -16,6 +16,7 @@
     "db:generate": "node scripts/database.mjs generate",
     "db:migrate": "node scripts/database.mjs migrate",
     "seed": "node scripts/database.mjs seed",
+    "reconcile": "node scripts/database.mjs reconcile",
     "db:local": "node scripts/local-postgres.mjs",
     "setup:local": "node scripts/setup-local.mjs",
     "test:integration": "pnpm --filter @warehouse-twin/api build && node scripts/integration.mjs"

@@ -8,8 +8,9 @@ const commands = {
   generate: ['node_modules/prisma/build/index.js', 'generate'],
   migrate: ['node_modules/prisma/build/index.js', 'migrate', 'deploy'],
   seed: ['seed.cjs'],
+  reconcile: ['reconcile.cjs'],
 };
 const args = commands[process.argv[2]];
-if (!args) throw new Error('Expected generate, migrate or seed');
+if (!args) throw new Error('Expected generate, migrate, seed or reconcile');
 const result = spawnSync(process.execPath, args, { cwd: `${root}/packages/database`, env: process.env, stdio: 'inherit', windowsHide: true });
 process.exitCode = result.status ?? 1;

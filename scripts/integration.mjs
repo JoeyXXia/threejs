@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
+import database from '../packages/database/index.cjs';
+import ledger from '../packages/database/reconcile.cjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 // Always create our own cluster/database; never use or reset DATABASE_URL/.env.
@@ -34,11 +36,35 @@ try {
   await pg.createDatabase('warehouse_twin_test');
   const client = pg.getPgClient(); await client.connect();
   const result = await client.query('SELECT version()'); await client.end();
-  writeFileSync(`${root}/reports/day-02-environment.json`, JSON.stringify({ capturedAt: new Date().toISOString(), node: process.version, postgres: result.rows[0].version }, null, 2));
+  writeFileSync(`${root}/reports/day-03-environment.json`, JSON.stringify({ capturedAt: new Date().toISOString(), node: process.version, postgres: result.rows[0].version }, null, 2));
   await run(['node_modules/prisma/build/index.js', 'migrate', 'deploy'], `${root}/packages/database`);
   await run(['seed.cjs'], `${root}/packages/database`);
   await run(['seed.cjs'], `${root}/packages/database`);
-  await run(['node_modules/jest/bin/jest.js', '--config', 'tests/integration/jest.config.cjs', '--runInBand', '--json', '--outputFile', 'reports/day-02-jest.json']);
+  await run(['node_modules/jest/bin/jest.js', '--config', 'tests/integration/jest.config.cjs', '--runInBand', '--json', '--outputFile', 'reports/day-03-jest.json']);
+  // Verify persisted rows after a real database restart, once all HTTP test processes have closed.
+  await pg.stop(); await pg.start();
+  const db = new database.PrismaClient({ datasourceUrl: databaseUrl });
+  try {
+    const evidence = await db.$transaction(async (tx) => {
+      const mismatches = await ledger.reconcile(tx);
+      const warehouses = await tx.warehouse.findMany({ include: { activeLayout: true }, orderBy: { id: 'asc' } });
+      const samples = [];
+      for (const warehouse of warehouses) {
+        const where = { spaceId: warehouse.spaceId, warehouseId: warehouse.id };
+        const totals = await tx.inventoryBalance.aggregate({ where, _sum: { onHand: true, reserved: true } });
+        samples.push({ ...where, layoutId: warehouse.activeLayoutId, layoutVersion: warehouse.activeLayout?.version,
+          zones: await tx.layoutZone.count({ where: { layoutId: warehouse.activeLayoutId } }),
+          racks: await tx.rack.count({ where: { layoutId: warehouse.activeLayoutId } }),
+          locations: await tx.location.count({ where }), balances: await tx.inventoryBalance.count({ where }),
+          movements: await tx.inventoryMovement.count({ where }), skus: await tx.sku.count({ where }), batches: await tx.batch.count({ where }),
+          onHand: totals._sum.onHand, reserved: totals._sum.reserved });
+      }
+      return { capturedAt: new Date().toISOString(), databaseRestarted: true, consistent: mismatches.length === 0, mismatches, warehouses: samples };
+    }, { isolationLevel: 'RepeatableRead' });
+    writeFileSync(`${root}/reports/day-03-inventory.json`, JSON.stringify(evidence, null, 2));
+    if (!evidence.consistent) throw new Error('Post-restart inventory reconciliation failed');
+    console.log('PASS: database restart and full balance/ledger reconciliation');
+  } finally { await db.$disconnect(); }
 } finally {
   if (started) await pg.stop();
 }
