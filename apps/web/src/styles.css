@@ -12,6 +12,13 @@ h1 { font-size: clamp(36px, 5.5vw, 64px); line-height: 1.25; letter-spacing: -.0
 [data-connection="offline"] { color: #9a401f; }
 button { padding: 9px 16px; border: 1px solid #667c75; border-radius: 6px; background: transparent; color: inherit; cursor: pointer; font: inherit; font-size: 13px; }
 button:hover { background: #e0e9e3; }
+button:disabled { cursor: not-allowed; opacity: .5; }
+.auth-form { display: grid; gap: 16px; max-width: 520px; }
+.auth-form label { display: grid; gap: 6px; font-size: 14px; }
+input { font: inherit; padding: 10px 12px; border: 1px solid #a4b5ad; border-radius: 6px; background: #fff; min-width: 0; }
+input:focus-visible { outline: 2px solid #337b66; outline-offset: 2px; }
+.warehouse-list { display: grid; gap: 28px; border-top: 1px solid #d1dad5; }
+.warehouse-list article p { overflow-wrap: anywhere; }
 button:focus-visible { outline: 3px solid #337b66; outline-offset: 3px; }
 .modules { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid #d1dad5; gap: 24px; }
 article { padding-top: 24px; }
