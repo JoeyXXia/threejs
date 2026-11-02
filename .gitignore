@@ -9,3 +9,4 @@ coverage/
 *.tsbuildinfo
 .local/
 reports/*.json
+output/playwright/

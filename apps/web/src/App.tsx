@@ -1,5 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
+import { Link, Navigate, NavLink, Route, Routes, useParams } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
+import { ApiError, api } from './api';
+import { WarehouseView } from './warehouse/WarehouseView';
 
 type Warehouse = { id: string; spaceId: string; name: string; version: number; role: 'ADMIN' | 'OPERATOR' | 'VIEWER' };
 type Session = { user: { id: string; email: string }; expiresAt: string; warehouses: Warehouse[] };
@@ -15,56 +19,56 @@ function parseSession(value: unknown): Session {
   return data as Session;
 }
 
-class ApiError extends Error {
-  constructor(public status: number) {
-    super(status === 401 ? '会话失效或凭据错误，请重新登录。'
-      : status === 403 ? '当前操作没有权限，或请求来源无效。'
-        : status === 409 ? '仓库资料已变化，请刷新后重试。'
-          : status === 429 ? '尝试次数过多，请稍后重试。' : '请求失败，请检查输入或服务状态。');
-  }
-}
+const warehousePath = (warehouse: Warehouse) => `/warehouses/${warehouse.spaceId}/${warehouse.id}`;
 
-async function api(path: string, method = 'GET', body?: unknown): Promise<unknown> {
-  const response = await fetch(`/api${path}`, {
-    method, credentials: 'same-origin', signal: AbortSignal.timeout(8000),
-    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'WarehouseTwin' },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
-  if (!response.ok) throw new ApiError(response.status);
-  return response.json();
+function WarehouseRoute({ session, onUnauthorized }: { session: Session; onUnauthorized: () => void }) {
+  const { spaceId, warehouseId } = useParams();
+  const warehouse = session.warehouses.find((entry) => entry.id === warehouseId && entry.spaceId === spaceId);
+  if (!warehouse) return <section role="alert" className="error-state"><h1>仓库不可访问</h1><p>当前身份没有该仓库的访问权限。</p><Link to="/account">查看授权仓库</Link></section>;
+  return <WarehouseView key={`${session.user.id}:${warehouse.spaceId}:${warehouse.id}`} userId={session.user.id}
+    spaceId={warehouse.spaceId} warehouseId={warehouse.id} name={warehouse.name} onUnauthorized={onUnauthorized} />;
 }
 
 export function App() {
+  const queryClient = useQueryClient();
   const [session, setSession] = useState<Session | null>(null);
   const [email, setEmail] = useState('admin@demo.local');
   const [password, setPassword] = useState('');
   const [message, setMessage] = useState('正在检查会话…');
   const [busy, setBusy] = useState(false);
   const generation = useRef(0);
+  const forgetSession = useCallback(() => {
+    generation.current++;
+    void queryClient.cancelQueries();
+    queryClient.clear();
+    setSession(null);
+    setMessage('会话已到期或失效，请重新登录。');
+  }, [queryClient]);
 
   useEffect(() => {
     const current = ++generation.current;
-    api('/auth/me').then((value) => {
+    const controller = new AbortController();
+    api('/auth/me', 'GET', undefined, controller.signal).then((value) => {
       if (current === generation.current) { setSession(parseSession(value)); setMessage('会话已恢复'); }
     }).catch((error: unknown) => {
       if (current === generation.current) setMessage(error instanceof ApiError && error.status === 401 ? '请登录演示账户。' : 'API 未连接，请检查后端与数据库。');
     });
-    return () => { generation.current++; };
+    return () => { generation.current++; controller.abort(); };
   }, []);
 
   useEffect(() => {
     if (!session) return;
     const timer = window.setTimeout(() => {
-      generation.current++; setSession(null); setMessage('会话已到期，请重新登录。');
+      forgetSession();
     }, Math.max(0, Date.parse(session.expiresAt) - Date.now()));
     return () => window.clearTimeout(timer);
-  }, [session]);
+  }, [session, forgetSession]);
 
   async function action(work: () => Promise<void>) {
     setBusy(true); setMessage('处理中…');
     try { await work(); }
     catch (error) {
-      if (error instanceof ApiError && error.status === 401) { generation.current++; setSession(null); }
+      if (error instanceof ApiError && error.status === 401) forgetSession();
       setMessage(error instanceof Error ? error.message : '请求失败');
     } finally { setBusy(false); }
   }
@@ -75,6 +79,7 @@ export function App() {
       const current = ++generation.current;
       try {
         await api('/auth/login', 'POST', { email, password });
+        queryClient.clear();
         const next = parseSession(await api('/auth/me'));
         if (current === generation.current) { setSession(next); setMessage('登录成功'); }
       } finally { setPassword(''); }
@@ -94,11 +99,11 @@ export function App() {
     });
   }
 
-  return <main>
-    <header><span className="brand">WT / WarehouseTwin</span><span>DAY 02 · 仓库访问</span></header>
-    <p className="eyebrow">仓储业务 × 空间可视化</p>
-    <h1>从身份开始，<br />明确每个仓库的边界。</h1>
-    <p className="intro">演示账户仅能访问获授权的空间与仓库。数据库保存用户、会话和审计；设备为软件模拟。</p>
+  return <main className={session ? 'app-shell' : 'login-shell'}>
+    <header><Link to="/" className="brand">WT / WarehouseTwin</Link><span>DAY 06 · 仓库浏览与库存</span></header>
+    {!session && <><p className="eyebrow">仓储业务 × 空间可视化</p>
+      <h1>每一个位置，<br />都连接后端业务数据。</h1>
+      <p className="intro">登录后读取仓库布局和批次库存，生成参数化 3D 场景。设备为软件模拟。</p></>}
     <p role="status">{message}</p>
     {!session ? <form onSubmit={login} className="auth-form">
       <label>邮箱<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="username" required maxLength={254} /></label>
@@ -110,7 +115,7 @@ export function App() {
         <span>{session.user.email} · 到期时间 {new Date(session.expiresAt).toLocaleTimeString()}</span>
         <button disabled={busy} onClick={() => { void action(async () => {
           generation.current++;
-          await api('/auth/logout', 'POST'); setSession(null); setMessage('已退出，服务端会话已撤销。');
+          await api('/auth/logout', 'POST'); forgetSession(); setMessage('已退出，服务端会话已撤销。');
         }); }}>退出登录</button>
         <button disabled={busy} onClick={() => { void action(async () => {
           const current = generation.current;
@@ -118,7 +123,14 @@ export function App() {
           if (current === generation.current) { setSession(next); setMessage('已刷新仓库访问权限。'); }
         }); }}>刷新权限</button>
       </section>
-      <section className="warehouse-list" aria-label="获授权仓库">
+      <div className="dashboard"><aside><p className="nav-label">获授权仓库</p><nav aria-label="主导航">
+        {session.warehouses.map((warehouse) => <NavLink key={warehouse.id} to={warehousePath(warehouse)}>{warehouse.name}<small>{warehouse.role}</small></NavLink>)}
+        <NavLink to="/account">仓库资料</NavLink></nav><p className="view-note">库存来源：PostgreSQL<br />设备：软件模拟<br />更新方式：手动刷新</p></aside>
+      <Routes>
+        <Route path="/" element={<Navigate replace to={session.warehouses[0] ? warehousePath(session.warehouses[0]) : '/account'} />} />
+        <Route path="/warehouses/:spaceId/:warehouseId" element={<WarehouseRoute session={session} onUnauthorized={forgetSession} />} />
+        <Route path="/account" element={<section className="warehouse-list" aria-label="获授权仓库资料">
+        <div><p className="eyebrow">账户 / 仓库资料</p><h1>访问与资料</h1></div>
         {session.warehouses.map((warehouse) => <article key={warehouse.id}>
           <small>{warehouse.role} · 版本 {warehouse.version}</small><h2>{warehouse.name}</h2>
           <p>空间 {warehouse.spaceId}<br />仓库 {warehouse.id}</p>
@@ -130,8 +142,10 @@ export function App() {
           </form>
         </article>)}
         {session.warehouses.length === 0 && <p>当前账户没有获授权仓库。</p>}
-      </section>
+      </section>} />
+        <Route path="*" element={<section className="error-state"><h1>页面不存在</h1><Link to="/">返回仓库</Link></section>} />
+      </Routes></div>
     </>}
-    <footer>当前页面提供身份与仓库资料；Day 3 已接入布局和库存只读 API，尚无 3D 场景或机器人运行数据。</footer>
+    <footer>WarehouseTwin · WMS 数据驱动的仓库演示。设备为软件模拟；未实现机器人运行、任务或实时推送。</footer>
   </main>;
 }

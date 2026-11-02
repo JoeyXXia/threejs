@@ -1,0 +1,29 @@
+name: warehouse-checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.14.0
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.25.0
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:generate
+      - run: pnpm check
+      - run: pnpm test:unit
+      - run: pnpm test:integration
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verification-results
+          path: reports/*.json
+          if-no-files-found: ignore

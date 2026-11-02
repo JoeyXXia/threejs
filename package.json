@@ -7,9 +7,9 @@
     "node": "22.14.x || >=24.19.0 <25"
   },
   "scripts": {
-    "dev": "pnpm --parallel --filter @warehouse-twin/* dev",
+    "dev": "pnpm --filter @warehouse-twin/contracts build && pnpm --parallel --filter @warehouse-twin/api --filter @warehouse-twin/web dev",
     "build": "pnpm -r build",
-    "typecheck": "pnpm -r typecheck",
+    "typecheck": "pnpm --filter @warehouse-twin/contracts build && pnpm -r typecheck",
     "lint": "eslint . --max-warnings 0",
     "check": "pnpm lint && pnpm typecheck && pnpm build",
     "smoke": "node scripts/smoke.mjs",
@@ -19,7 +19,9 @@
     "reconcile": "node scripts/database.mjs reconcile",
     "db:local": "node scripts/local-postgres.mjs",
     "setup:local": "node scripts/setup-local.mjs",
-    "test:integration": "pnpm --filter @warehouse-twin/api build && node scripts/integration.mjs"
+    "test:integration": "pnpm --filter @warehouse-twin/contracts build && pnpm --filter @warehouse-twin/api build && node scripts/integration.mjs",
+    "test:unit": "pnpm --filter @warehouse-twin/contracts build && pnpm --filter @warehouse-twin/web test:unit",
+    "qa:browser": "pnpm --filter @warehouse-twin/contracts build && pnpm --filter @warehouse-twin/api build && node scripts/day4-browser-environment.mjs"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

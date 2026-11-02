@@ -36,11 +36,11 @@ try {
   await pg.createDatabase('warehouse_twin_test');
   const client = pg.getPgClient(); await client.connect();
   const result = await client.query('SELECT version()'); await client.end();
-  writeFileSync(`${root}/reports/day-03-environment.json`, JSON.stringify({ capturedAt: new Date().toISOString(), node: process.version, postgres: result.rows[0].version }, null, 2));
+  writeFileSync(`${root}/reports/integration-environment.json`, JSON.stringify({ capturedAt: new Date().toISOString(), node: process.version, postgres: result.rows[0].version }, null, 2));
   await run(['node_modules/prisma/build/index.js', 'migrate', 'deploy'], `${root}/packages/database`);
   await run(['seed.cjs'], `${root}/packages/database`);
   await run(['seed.cjs'], `${root}/packages/database`);
-  await run(['node_modules/jest/bin/jest.js', '--config', 'tests/integration/jest.config.cjs', '--runInBand', '--json', '--outputFile', 'reports/day-03-jest.json']);
+  await run(['node_modules/jest/bin/jest.js', '--config', 'tests/integration/jest.config.cjs', '--runInBand', '--json', '--outputFile', 'reports/integration-jest.json']);
   // Verify persisted rows after a real database restart, once all HTTP test processes have closed.
   await pg.stop(); await pg.start();
   const db = new database.PrismaClient({ datasourceUrl: databaseUrl });
@@ -61,7 +61,7 @@ try {
       }
       return { capturedAt: new Date().toISOString(), databaseRestarted: true, consistent: mismatches.length === 0, mismatches, warehouses: samples };
     }, { isolationLevel: 'RepeatableRead' });
-    writeFileSync(`${root}/reports/day-03-inventory.json`, JSON.stringify(evidence, null, 2));
+    writeFileSync(`${root}/reports/integration-inventory.json`, JSON.stringify(evidence, null, 2));
     if (!evidence.consistent) throw new Error('Post-restart inventory reconciliation failed');
     console.log('PASS: database restart and full balance/ledger reconciliation');
   } finally { await db.$disconnect(); }

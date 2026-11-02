@@ -1,8 +1,8 @@
 # WarehouseTwin
 
-WMS 业务驱动的智能仓库数字孪生演示系统。设备为软件模拟；未来业务库存将由后端 PostgreSQL 真实持久化。
+WMS 业务驱动的智能仓库数字孪生演示系统。样本为合成数据，库存与流水由 PostgreSQL 持久化，设备为软件模拟。
 
-当前进度：Day 3，已有 PostgreSQL / Prisma、数据库会话、仓库授权和审计；新增版本布局、稳定货位、SKU/批次、真实库存余额及可重算期初流水，提供只读 API。尚无库存页面、3D 场景、调度或回放。
+当前进度：Day 6，本地已实现 API 驱动的 3D 场景、拾取/批次详情、库存状态图例、搜索定位、正交/透视、区域筛选和 2D 列表；已有 PostgreSQL/Prisma、会话授权、版本布局和可重算流水。CI workflow 已配置，远程结果待推送后确认。尚无调度、运输任务、收发货业务命令或回放。
 
 ## 开发
 
@@ -34,6 +34,8 @@ pnpm dev
 
 页面支持登录、刷新权限、到期/401 清除登录状态、退出，以及获授权仓库名称更新。viewer 表单只读，服务端同时拒绝写入；admin/operator 修改须提供原因和当前版本，冲突返回 409。请求有 8 秒超时。`/health` 是存活检查，不检测 DB。数据库不可用时身份与仓库请求不会返回假数据。
 
+登录后由路由进入获授权仓库。Query 按用户/空间/仓库缓存配对快照，Zustand 只保存页面选择/图层；接口版本不一致时重取一次，失败不显示旧库存或假默认值。点选货位查看详情，货架遮挡不穿透；可用搜索或 2D 列表选择。区域筛选只影响展示，不改库存或障碍。无 WebGL 时可直接使用 2D 列表。
+
 ```powershell
 pnpm lint
 pnpm typecheck
@@ -41,12 +43,15 @@ pnpm build
 pnpm smoke
 pnpm smoke --dev-api
 pnpm smoke --dev-api --with-auth
+pnpm test:unit
 pnpm test:integration
 ```
 
 `pnpm check` 顺序执行 lint、typecheck、build；首次安装先执行 `pnpm db:generate`。`pnpm smoke` 在构建后自动启动临时 API 和 Vite dev server，验证健康响应、前端 HTML、TSX 转换、匿名 401 与代理，并清理进程；`--dev-api` 改用 tsx 从源码启动 API；`--with-auth` 读取本地 `.env`，需要已迁移、seed 且正在运行的开发库，再验证代理登录/退出。需空闲 13000 / 15173 端口。这些不是浏览器交互或 WebGL 测试。
 
-`pnpm test:integration` 自动构建 API，在 15432 启动全新 PostgreSQL 测试集群，迁移、重复 seed，然后执行 Jest/Supertest。API 测试占用 13001 / 13002。测试使用随机密码和 `warehouse_twin_test`，不读取或清空开发库；最后重启 DB 并重算所有余额，再关闭服务。临时数据库文件保留在系统 TEMP；原始结果为 `reports/day-03-jest.json`、`reports/day-03-environment.json`、`reports/day-03-inventory.json`（忽略入 Git）。Day 2 报告保留当时结果，当前报告见下方。
+`pnpm test:unit` 先构建共享契约，再运行 Vitest，输出 `reports/unit.json`。`pnpm test:integration` 自动构建契约/API，在 15432 启动全新 PostgreSQL 测试集群，迁移、重复 seed，再执行 Jest/Supertest。API 测试占用 13001 / 13002；随机密码与独立 `warehouse_twin_test` 不读取或清空开发库。最后重启 DB、重算全部余额并关闭服务。临时文件保留于 TEMP，原始证据为 `reports/integration-jest.json`、`reports/integration-environment.json`、`reports/integration-inventory.json`（忽略入 Git），历史日报保留当时结果。
+
+浏览器复验：交互终端运行 `pnpm qa:browser`，使用独立临时 DB，不读取 `.env`。详见[验收说明](scripts/browser-checks/README.md)；当前已实测正常 Chrome 与禁用 WebGL 的独立会话。CLI 截图和快照保存在忽略的 `output/playwright/`，最终截图见 [Day 6 预览](reports/day-06-preview.png)。这不代表已完成跨设备性能测试。
 
 Day 3 只读入口：`GET /api/spaces/:spaceId/warehouses/:warehouseId/layout` 与同前缀 `/inventory`（直接 API 端口不带 `/api`）。需要登录 Cookie，viewer 可读，跨仓返回 404。返回布局版本、货位/服务点、货架阻挡和真实批次余额；空位显式返回 0，待检或到期库存不计 available。两个请求组合时应核对 layoutId/version 一致。
 
@@ -66,8 +71,12 @@ Day 3 只读入口：`GET /api/spaces/:spaceId/warehouses/:warehouseId/layout` �
 - [布局与库存模型决策](docs/adr/0003-layout-and-inventory-foundation.md)
 - [Day 3 开发日志](docs/devlog/day-03.md)
 - [Day 3 验收报告](reports/day-03-acceptance.md)
+- [场景、数据与交互决策](docs/adr/0004-scene-data-and-interaction.md)
+- [Day 4 日志](docs/devlog/day-04.md) · [验收报告](reports/day-04-acceptance.md)
+- [Day 5 日志](docs/devlog/day-05.md) · [验收报告](reports/day-05-acceptance.md)
+- [Day 6 日志](docs/devlog/day-06.md) · [验收报告](reports/day-06-acceptance.md)
 - [项目总计划](doc/planning/WarehouseTwin-项目总计划.md)
 - [56 天每日计划](doc/planning/WarehouseTwin-56天每日计划.md)
 - [面试与 AI 协作](doc/planning/WarehouseTwin-面试与AI协作手册.md)
 
-原始计划在 `doc/planning`，保留原路径；新增工程文档在 `docs`。沿用当前 `node-react-three` 工作区，逻辑项目名为 WarehouseTwin。[GitHub 仓库](https://github.com/JoeyXXia/threejs)已包含 Day 1/2；Day 3 实际修改与提交状态以本地 Git 为准。
+原始计划在 `doc/planning`，保留原路径；新增工程文档在 `docs`。沿用当前 `node-react-three` 工作区，逻辑项目名为 WarehouseTwin。[GitHub 仓库](https://github.com/JoeyXXia/threejs)已包含 Day 1–3；Day 4–6 实际修改与提交状态以本地 Git 为准。
