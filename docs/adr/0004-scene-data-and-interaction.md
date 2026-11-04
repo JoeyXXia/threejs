@@ -53,3 +53,33 @@ Vitest 验证坐标、契约、取消、cache scope、状态/详情、搜索/筛
 CI 定义于 `.github/workflows/ci.yml`，Windows runner、固定 Node/pnpm、冻结安装、Prisma 生成、check、Vitest、真实 DB 集成及结果上传。对应命令本地通过，远程运行需推送后确认，不能把配置文件当成 CI 成绩。
 
 当前不实现业务分配、机器人运动、Socket、回放、实时库存更新、复杂性能档位、搜索路径算法或工业设备接入。没有测量 FPS、吞吐或长期资源曲线。
+
+## Day 7 复盘：一条库存从数据库到屏幕（2026-11-04）
+
+沿用 [ADR 0001 的坐标与单位](0001-scope-and-coordinates.md)，不新增第二套转换或状态容器。
+
+```mermaid
+flowchart LR
+  Seed[合成 seed / OPENING 流水] --> TX[数据库事务]
+  TX --> DB[PostgreSQL 余额与流水]
+  DB --> API[NestJS 授权与一致读取]
+  API --> Parse[共享契约运行时校验 / 版本配对]
+  Parse --> Query[Query 仓库快照]
+  Query --> Views[按 locationId 派生视图]
+  Views --> Scene[R3F 场景与详情]
+  Views --> Table[React 2D 列表与详情]
+  UI[Zustand 选择 / 筛选] --> Scene
+  UI --> Table
+```
+
+以 R01-1-L1 为例：`seed-inventory.cjs` 在持有仓库行锁的 seed 事务中写入余额与 OPENING 流水，记录 `actorType=SEED`、来源布局及业务唯一键。前端启动和刷新都不会执行 seed。API 从 DB 读取当前已发布布局和余额，按读取时刻排除 HOLD/过期库存的可用量；网络数据经共享 schema、归属和版本校验后进入 Query。`locationViews` 用稳定 locationId 关联总量与批次；3D 点击和 2D 按钮只改变选择 ID，复用同一个详情组件。
+
+格心 X/Z 为 `origin + (grid + 0.5) * cellSize`；货架矩形中心按矩形边缘计算，不能再多加半格。层高决定显示 Y；serviceCell 表示地面接近点，不是架内货位。筛选隐藏显示对象不会改变 blockedCells。
+
+**事务边界**：seed 的余额、期初流水和初始布局同事务；每个只读 API 的权限/布局/库存读取使用 RepeatableRead。layout 与 inventory 两个请求分别提交，前端按布局版本配对，不能声称是跨请求原子快照。当前没有库存写接口，不能将 QA 的 `reserve` 夹具维护等同业务预占；未来业务写入必须另行设计。
+
+**同步边界**：只有首次读取与手动刷新，没有 Socket 或事件水位；整页重载清掉内存 UI 状态，从服务端恢复业务数据。相机完成只代表画面就位。所有异步读取沿用 AbortSignal，切仓/身份变化防旧响应覆盖。不要用动画完成修改余额。
+
+**React 与清理**：React 渲染声明 UI，不应执行数据库写入；useEffect 负责订阅与同步并返回清理。当前 StrictMode 下 effects 可能经历额外 setup/cleanup，故取消请求、解绑 context-loss listener 和丢弃相机 motion 都必须可重复执行。Drei 管理 controls 订阅，声明式 mesh 资源由 R3F 管理；这不构成长时间资源稳定性的实测结论。
+
+**验收与理解分开**：2026-11-04 已实际验证两个 raycast 详情、17 行列表、整页刷新前后 API 和汇总一致。开发者独立口述仍待完成：①不用看代码画 DB→屏幕；②解释 Query/Zustand/ref；③说明 useEffect cleanup 与 StrictMode；④指出 seed 与运行时数据边界。AI 撰写这段说明不代表用户已经独立掌握。

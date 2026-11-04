@@ -2,7 +2,7 @@
 
 WMS 业务驱动的智能仓库数字孪生演示系统。样本为合成数据，库存与流水由 PostgreSQL 持久化，设备为软件模拟。
 
-当前进度：Day 6，本地已实现 API 驱动的 3D 场景、拾取/批次详情、库存状态图例、搜索定位、正交/透视、区域筛选和 2D 列表；已有 PostgreSQL/Prisma、会话授权、版本布局和可重算流水。CI workflow 已配置，远程结果待推送后确认。尚无调度、运输任务、收发货业务命令或回放。
+当前进度：Day 7 / `v0.1-scene`。已实现 API 驱动的 3D 场景、拾取/批次详情、库存状态图例、搜索定位、正交/透视、区域筛选和 2D 列表；已有 PostgreSQL/Prisma、会话授权、版本布局和可重算流水。Day 7 已验证整页刷新、3D/2D/API 一致性并录制演示。[发布说明](docs/releases/v0.1-scene.md)包含能力边界。基线 `b993d9f` 的远程 CI 已成功，后续提交状态以 Actions 为准。尚无调度、运输任务、收发货业务命令或回放。
 
 ## 开发
 
@@ -75,8 +75,9 @@ Day 3 只读入口：`GET /api/spaces/:spaceId/warehouses/:warehouseId/layout` �
 - [Day 4 日志](docs/devlog/day-04.md) · [验收报告](reports/day-04-acceptance.md)
 - [Day 5 日志](docs/devlog/day-05.md) · [验收报告](reports/day-05-acceptance.md)
 - [Day 6 日志](docs/devlog/day-06.md) · [验收报告](reports/day-06-acceptance.md)
+- [Day 7 日志](docs/devlog/day-07.md) · [验收报告](reports/day-07-acceptance.md) · [演示录像](reports/day-07-demo.webm)
 - [项目总计划](doc/planning/WarehouseTwin-项目总计划.md)
 - [56 天每日计划](doc/planning/WarehouseTwin-56天每日计划.md)
 - [面试与 AI 协作](doc/planning/WarehouseTwin-面试与AI协作手册.md)
 
-原始计划在 `doc/planning`，保留原路径；新增工程文档在 `docs`。沿用当前 `node-react-three` 工作区，逻辑项目名为 WarehouseTwin。[GitHub 仓库](https://github.com/JoeyXXia/threejs)已包含 Day 1–3；Day 4–6 实际修改与提交状态以本地 Git 为准。
+原始计划在 `doc/planning`，保留原路径；新增工程文档在 `docs`。沿用当前 `node-react-three` 工作区，逻辑项目名为 WarehouseTwin。[GitHub 仓库](https://github.com/JoeyXXia/threejs)；阶段发布通过 Git 标签追溯，具体提交和同步状态以 Git 为准。

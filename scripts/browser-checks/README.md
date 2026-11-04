@@ -24,3 +24,17 @@ QA 终端命令：`layout-v2` 发布 R01 移动两格的新版本，随后用 `l
 CLI 截图/快照位于忽略的 `output/playwright/`；只关闭本次命名会话，不用 `kill-all` 影响其他浏览器。图像差异不用于判断相机是否完成，验收使用完成标记和实际目标。
 
 最后可在仓库页运行 QA 终端 `expire`，再执行 `session-expiry.js`；验证返回登录表单且清除 Canvas 与库存汇总。此检查会结束当前测试登录状态。
+
+## Day 7 演示与持久化
+
+新启动普通 QA 环境，勿执行 `reserve`/`layout-v2`/`expire`。在 `output/playwright/day-07` 打开独立 `warehouse-day7` Chrome 会话，snapshot 后使用当前 ref 登录。登录后先读取场景快照，再执行：
+
+```powershell
+npx --yes --package @playwright/cli playwright-cli -s=warehouse-day7 video-start day-07-demo.webm --size=1440x1100 --fps=25
+npx --yes --package @playwright/cli playwright-cli -s=warehouse-day7 run-code --filename ../../../scripts/browser-checks/day7-demo.js
+npx --yes --package @playwright/cli playwright-cli -s=warehouse-day7 video-stop
+```
+
+逐条检查成功后才执行下一条，尤其不要把回调通过当作录像成功。缺 ffmpeg 时用 `npx --yes --package @playwright/cli -c "playwright install ffmpeg"` 安装测试工具二进制；失败的 video-start 若保留状态，先 video-stop，再重新开始。保存后确认文件实际存在且可解码。
+
+回调先对照 API 和真实 raycast 的两个货位，再逐行核对全部 17 行，执行整页 reload 并重新对照布局/库存（只排除 asOf）与 UI 汇总。末尾验证 HOLD 详情并截图；暂停仅为录像阅读节奏，不用固定延迟替代就绪断言。文件在当前目录，录屏没有开发 Cookie/数据库密码；结束后只关闭该会话并在 QA 终端执行 `stop`。
