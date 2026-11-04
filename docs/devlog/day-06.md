@@ -13,3 +13,10 @@
 - 下次第一步：按用户要求再进入 Day 7 复盘，不提前做机器人或实时系统。
 
 详见 [验收报告](../../reports/day-06-acceptance.md)与 [预览](../../reports/day-06-preview.png)。
+
+## 2026-11-04 复核
+
+- 用户再次指定 Day 6，按已提交版本 `b993d9f` 核对现有实现，无需重复添加相机/筛选/列表功能；本次仅补报告与日志。
+- 当日复测：35 项前端测试与 `pnpm check` 通过。既有浏览器证据保持原日期，没有把旧截图当作今日录屏。
+- 远程证据补齐：[Actions run 41392140712](https://github.com/JoeyXXia/threejs/actions/runs/41392140712) 对应 `b993d9f9c305952065b87e611b06eeb4eb023dd1`，checks 全部成功，包含真实 DB 集成步骤。
+- 当日数据库/API 回归：2 suites、44 项通过，PostgreSQL 重启后对账通过。首次 initdb 因沙箱 WAL 重命名权限失败，正常本机权限重跑独立临时库通过。未新增框架、业务写命令或机器人功能。

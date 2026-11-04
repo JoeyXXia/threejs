@@ -38,3 +38,16 @@ CI 文件 `.github/workflows/ci.yml` 使用 Windows runner 和精确工具链，
 原始本地产物：`reports/unit.json`、`reports/integration-jest.json`、`reports/integration-environment.json`、`reports/integration-inventory.json`；这些 JSON 忽略入 Git。可执行 CLI 回调在 `scripts/browser-checks`；交互终端运行 `pnpm qa:browser` 后使用独立测试浏览器执行。详细命令见 [浏览器验收说明](../scripts/browser-checks/README.md)。
 
 ![最终 QA 场景与批次详情](day-06-preview.png)
+
+## 2026-11-04 复核：已提交版本与远程 CI
+
+复核代码提交：`b993d9f9c305952065b87e611b06eeb4eb023dd1`。按用户本次要求继续核对 Day 6，没有进入 Day 7 或新增功能框架；本次修改仅补充报告与 devlog，保留上面的首次验收历史。
+
+- 代码复核：搜索精确优先、单一可替换相机动画、透视/正交及 resize、展示筛选、2D 降级和 CI 均已存在。Query 持有业务快照，Zustand 只保存 UI 参数，R3F/ref 只控制显示；筛选不改变库存或布局障碍。
+- 当日 `pnpm test:unit`：5 文件、35 项通过。
+- 当日 `pnpm check`：lint、strict typecheck 和全部构建通过。3D chunk 仍为 938.10 kB（gzip 249.74 kB），保留 >500 kB 警告，不据此宣称 FPS 或性能达标。
+- 当日 `pnpm test:integration`：2 suites、44 项通过；真实 PostgreSQL 重启后全量余额/流水对账通过。首次在沙箱临时目录执行时，initdb 重命名 WAL 文件被系统拒绝，尚未进入测试；使用正常本机权限对独立临时库重跑后通过，没有修改开发库或测试断言来规避失败。
+- 远程 CI：[warehouse-checks / run 41392140712](https://github.com/JoeyXXia/threejs/actions/runs/41392140712) 对应上述完整 SHA，状态 completed、结论 success；checks job 的冻结安装、Prisma 生成、check、unit、integration 和 artifact 上传逐项 success。通过 GitHub Actions API 与连接器 job steps 核实，不把空的 commit-status 列表误认为未运行。
+- 本次未重新运行浏览器或生成新截图；前文导航、context loss、冷启动无 WebGL 与截图证据均来自 2026-11-02，同一应用代码提交，不标记为今日实测。
+
+复现命令：`pnpm test:unit`、`pnpm check`、`pnpm test:integration`。浏览器复现继续使用[现有说明](../scripts/browser-checks/README.md)与 `navigation.js`、`cold-webgl.js`。
