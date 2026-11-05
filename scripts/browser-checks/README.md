@@ -38,3 +38,19 @@ npx --yes --package @playwright/cli playwright-cli -s=warehouse-day7 video-stop
 逐条检查成功后才执行下一条，尤其不要把回调通过当作录像成功。缺 ffmpeg 时用 `npx --yes --package @playwright/cli -c "playwright install ffmpeg"` 安装测试工具二进制；失败的 video-start 若保留状态，先 video-stop，再重新开始。保存后确认文件实际存在且可解码。
 
 回调先对照 API 和真实 raycast 的两个货位，再逐行核对全部 17 行，执行整页 reload 并重新对照布局/库存（只排除 asOf）与 UI 汇总。末尾验证 HOLD 详情并截图；暂停仅为录像阅读节奏，不用固定延迟替代就绪断言。文件在当前目录，录屏没有开发 Cookie/数据库密码；结束后只关闭该会话并在 QA 终端执行 `stop`。
+
+## Day 8 入库与质检
+
+启动新的 `pnpm qa:browser` 临时环境。以下命令从仓库根目录执行，用独立会话 `warehouse-day8` 打开 QA 地址、snapshot 后按当前 ref 登录；不运行 reserve/layout-v2 夹具命令。
+
+```powershell
+npx --yes --package @playwright/cli playwright-cli -s=warehouse-day8 open http://127.0.0.1:15174 --browser chrome
+npx --yes --package @playwright/cli playwright-cli -s=warehouse-day8 snapshot
+# 按当前 ref 登录后读取场景 snapshot，再依次运行：
+npx --yes --package @playwright/cli playwright-cli -s=warehouse-day8 run-code --filename scripts/browser-checks/day8-inbound.js
+npx --yes --package @playwright/cli playwright-cli -s=warehouse-day8 run-code --filename scripts/browser-checks/day8-access.js
+# QA 终端执行 expire，保持在 A 仓入库页，再运行：
+npx --yes --package @playwright/cli playwright-cli -s=warehouse-day8 run-code --filename scripts/browser-checks/day8-session-expiry.js
+```
+
+inbound 回调真实提交两单，验证后端收货成功却丢失响应后的原 key 重试、3 件放行、2 件过期拒绝、整页重载及 3D/2D/API 对照。普通 seed 首次执行结果为现存 67、可用 58、预占 0、HOLD 9；重复执行会新建不同批次并增加数量，不是重置脚本。access 验证 B 仓只读及切仓隔离；expiry 验证清单/表单退出。截图在 `output/playwright/day-08`，仅合成测试记录，不包含开发口令。截图核对后可复制到 reports 作为证据；结束关闭本次会话并向 QA 终端发送 stop。
