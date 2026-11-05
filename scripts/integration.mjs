@@ -12,7 +12,8 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 // Always create our own cluster/database; never use or reset DATABASE_URL/.env.
 const password = randomBytes(24).toString('hex');
 const databaseUrl = `postgresql://warehouse:${password}@127.0.0.1:15432/warehouse_twin_test`;
-const env = { ...process.env, DATABASE_URL: databaseUrl, TEST_DATABASE_URL: databaseUrl,
+const inboundDatabaseUrl = `postgresql://warehouse:${password}@127.0.0.1:15432/warehouse_twin_inbound_test`;
+const env = { ...process.env, DATABASE_URL: databaseUrl, TEST_DATABASE_URL: databaseUrl, INBOUND_TEST_DATABASE_URL: inboundDatabaseUrl,
   DEMO_PASSWORD: randomBytes(16).toString('hex'), NODE_ENV: 'test', SESSION_TTL_SECONDS: '3600', SESSION_SECURE: 'false',
   WEB_ORIGINS: 'http://127.0.0.1:5173,http://localhost:5173' };
 mkdirSync(`${root}/.local`, { recursive: true });
@@ -22,9 +23,9 @@ const pg = await createPostgres({
   persistent: true, authMethod: 'scram-sha-256', initdbFlags: ['--encoding=UTF8', '--locale=C'],
   postgresFlags: ['-c', 'listen_addresses=127.0.0.1'], onLog: () => {}, onError: () => {},
 });
-async function run(args, cwd = root) {
+async function run(args, cwd = root, commandEnv = env) {
   await new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, args, { cwd, env, stdio: 'inherit', windowsHide: true });
+    const child = spawn(process.execPath, args, { cwd, env: commandEnv, stdio: 'inherit', windowsHide: true });
     child.on('error', reject);
     child.on('exit', (code) => code === 0 ? resolve() : reject(new Error(`Command failed (${code})`)));
   });
@@ -40,10 +41,17 @@ try {
   await run(['node_modules/prisma/build/index.js', 'migrate', 'deploy'], `${root}/packages/database`);
   await run(['seed.cjs'], `${root}/packages/database`);
   await run(['seed.cjs'], `${root}/packages/database`);
+  // Keep the original 44 regression assertions intact: Day 8 uses another DB in this same cluster.
+  await pg.createDatabase('warehouse_twin_inbound_test');
+  const inboundEnv = { ...env, DATABASE_URL: inboundDatabaseUrl };
+  await run(['node_modules/prisma/build/index.js', 'migrate', 'deploy'], `${root}/packages/database`, inboundEnv);
+  await run(['seed.cjs'], `${root}/packages/database`, inboundEnv);
   await run(['node_modules/jest/bin/jest.js', '--config', 'tests/integration/jest.config.cjs', '--runInBand', '--json', '--outputFile', 'reports/integration-jest.json']);
   // Verify persisted rows after a real database restart, once all HTTP test processes have closed.
   await pg.stop(); await pg.start();
-  const db = new database.PrismaClient({ datasourceUrl: databaseUrl });
+  const results = [];
+  for (const datasourceUrl of [databaseUrl, inboundDatabaseUrl]) {
+  const db = new database.PrismaClient({ datasourceUrl });
   try {
     const evidence = await db.$transaction(async (tx) => {
       const mismatches = await ledger.reconcile(tx);
@@ -61,10 +69,13 @@ try {
       }
       return { capturedAt: new Date().toISOString(), databaseRestarted: true, consistent: mismatches.length === 0, mismatches, warehouses: samples };
     }, { isolationLevel: 'RepeatableRead' });
-    writeFileSync(`${root}/reports/integration-inventory.json`, JSON.stringify(evidence, null, 2));
+    results.push({ database: new URL(datasourceUrl).pathname.slice(1), ...evidence });
     if (!evidence.consistent) throw new Error('Post-restart inventory reconciliation failed');
     console.log('PASS: database restart and full balance/ledger reconciliation');
   } finally { await db.$disconnect(); }
+  }
+  writeFileSync(`${root}/reports/integration-inventory.json`, JSON.stringify({ capturedAt: new Date().toISOString(), databaseRestarted: true,
+    consistent: results.every((result) => result.consistent), mismatches: results.flatMap((result) => result.mismatches), databases: results }, null, 2));
 } finally {
   if (started) await pg.stop();
 }

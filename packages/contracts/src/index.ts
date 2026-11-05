@@ -61,6 +61,32 @@ export type InventoryResponse = z.infer<typeof inventorySchema>;
 export type WarehouseSnapshot = { layout: LayoutResponse; inventory: InventoryResponse };
 export type ZoneKind = z.infer<typeof kind>;
 
+const timestamp = z.string().datetime();
+export const createInboundSchema = z.object({
+  key: z.string().trim().min(8).max(100), skuId: id, batchCode: z.string().trim().min(1).max(80),
+  qcLocationId: id, quantity: z.number().int().positive().max(1000000),
+  producedAt: timestamp.nullable(), expiresAt: timestamp.nullable(), reason: z.string().trim().min(1).max(200),
+}).strict().refine((value) => !value.producedAt || !value.expiresAt || Date.parse(value.producedAt) < Date.parse(value.expiresAt), { message: '生产日期必须早于到期时间' });
+export type CreateInboundInput = z.infer<typeof createInboundSchema>;
+export const inboundOrderSchema = z.object({
+  id, spaceId: id, warehouseId: id, skuId: id, skuCode: z.string(), batchId: id, batchCode: z.string(),
+  qcLocationId: id, qcCode: z.string(), quantity: z.number().int().positive(),
+  status: z.enum(['CREATED', 'RECEIVED', 'PASSED', 'REJECTED']), version: quantity,
+  producedAt: timestamp.nullable(), expiresAt: timestamp.nullable(),
+  createdById: id, receivedById: id.nullable(), inspectedById: id.nullable(),
+  reason: z.string(), receiptReason: z.string().nullable(), inspectionReason: z.string().nullable(),
+  createdAt: timestamp, receivedAt: timestamp.nullable(), inspectedAt: timestamp.nullable(),
+});
+export type InboundOrderResponse = z.infer<typeof inboundOrderSchema>;
+export const inboundListSchema = z.object({
+  spaceId: id, warehouseId: id, role: z.enum(['ADMIN', 'OPERATOR', 'VIEWER']),
+  skus: z.array(z.object({ id, code: z.string() })), qcLocations: z.array(z.object({ id, code: z.string() })),
+  orders: z.array(inboundOrderSchema), hasMore: z.boolean(),
+}).superRefine((value, ctx) => {
+  if (value.orders.some((row) => row.spaceId !== value.spaceId || row.warehouseId !== value.warehouseId)) ctx.addIssue({ code: 'custom', message: 'Order scope mismatch' });
+});
+export type InboundListResponse = z.infer<typeof inboundListSchema>;
+
 export function validateSnapshot(layout: LayoutResponse, inventory: InventoryResponse, spaceId: string, warehouseId: string): WarehouseSnapshot {
   if (layout.spaceId !== spaceId || inventory.spaceId !== spaceId || layout.warehouseId !== warehouseId || inventory.warehouseId !== warehouseId) {
     throw new Error('Warehouse scope mismatch');

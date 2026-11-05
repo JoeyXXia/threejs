@@ -22,6 +22,9 @@ model User {
   access       WarehouseAccess[]
   auditLogs    AuditLog[]
   commands     IdempotencyRecord[]
+  createdInbound InboundOrder[] @relation("InboundCreator")
+  receivedInbound InboundOrder[] @relation("InboundReceiver")
+  inspectedInbound InboundOrder[] @relation("InboundInspector")
 }
 
 model Space {
@@ -47,6 +50,7 @@ model Warehouse {
   activeLayout LayoutVersion? @relation("ActiveLayout", fields: [spaceId, id, activeLayoutId], references: [spaceId, warehouseId, id], onDelete: Restrict, onUpdate: NoAction)
   locations Location[]
   skus Sku[]
+  inboundOrders InboundOrder[]
   @@unique([spaceId, id])
 }
 
@@ -72,6 +76,14 @@ enum Quality {
 enum MovementKind {
   OPENING
   TRANSFER
+  RECEIPT
+}
+
+enum InboundStatus {
+  CREATED
+  RECEIVED
+  PASSED
+  REJECTED
 }
 
 model LayoutVersion {
@@ -145,6 +157,7 @@ model Location {
   balances InventoryBalance[]
   movementsFrom InventoryMovement[] @relation("MovementSource")
   movementsTo InventoryMovement[] @relation("MovementDestination")
+  inboundOrders InboundOrder[]
   @@unique([spaceId, warehouseId, id])
   @@unique([spaceId, warehouseId, code])
 }
@@ -190,9 +203,11 @@ model Batch {
   skuId String @db.Uuid
   code String
   expiresAt DateTime?
+  producedAt DateTime?
   sku Sku @relation(fields: [spaceId, warehouseId, skuId], references: [spaceId, warehouseId, id], onDelete: Restrict)
   balances InventoryBalance[]
   movements InventoryMovement[]
+  inboundOrders InboundOrder[]
   @@unique([spaceId, warehouseId, skuId, id])
   @@unique([spaceId, warehouseId, skuId, code])
 }
@@ -212,6 +227,36 @@ model InventoryBalance {
   location Location @relation(fields: [spaceId, warehouseId, locationId], references: [spaceId, warehouseId, id], onDelete: Restrict)
   batch Batch @relation(fields: [spaceId, warehouseId, skuId, batchId], references: [spaceId, warehouseId, skuId, id], onDelete: Restrict)
   @@unique([spaceId, warehouseId, locationId, skuId, batchId, quality])
+}
+
+// One SKU/batch, full receipt and full inspection; no partial operations in Day 8.
+model InboundOrder {
+  id String @id @default(uuid()) @db.Uuid
+  spaceId String @db.Uuid
+  warehouseId String @db.Uuid
+  skuId String @db.Uuid
+  batchId String @db.Uuid
+  qcLocationId String @db.Uuid
+  quantity Int
+  status InboundStatus @default(CREATED)
+  version Int @default(0)
+  createdById String @db.Uuid
+  receivedById String? @db.Uuid
+  inspectedById String? @db.Uuid
+  reason String
+  receiptReason String?
+  inspectionReason String?
+  createdAt DateTime @default(now())
+  receivedAt DateTime?
+  inspectedAt DateTime?
+  warehouse Warehouse @relation(fields: [spaceId, warehouseId], references: [spaceId, id], onDelete: Restrict, onUpdate: NoAction)
+  batch Batch @relation(fields: [spaceId, warehouseId, skuId, batchId], references: [spaceId, warehouseId, skuId, id], onDelete: Restrict, onUpdate: NoAction)
+  qcLocation Location @relation(fields: [spaceId, warehouseId, qcLocationId], references: [spaceId, warehouseId, id], onDelete: Restrict, onUpdate: NoAction)
+  createdBy User @relation("InboundCreator", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  receivedBy User? @relation("InboundReceiver", fields: [receivedById], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  inspectedBy User? @relation("InboundInspector", fields: [inspectedById], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  @@unique([spaceId, warehouseId, id])
+  @@index([spaceId, warehouseId, createdAt])
 }
 
 // One complete transfer record (source nullable only for an external receipt).
