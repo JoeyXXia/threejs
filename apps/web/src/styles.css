@@ -81,3 +81,10 @@ table { border-collapse: collapse; width: 100%; background: #fafcf9; font-size: 
 th, td { padding: 12px 16px; text-align: left; border-bottom: 1px solid #d1dad5; white-space: nowrap; }
 thead { background: #e1ebe3; } tr[aria-selected="true"] { background: #dce9df; }
 td button, th button { padding: 5px 10px; font-size: 12px; }
+/* Day 8: simple, accessible business forms; no extra component framework. */
+.inbound-form, .inbound-order { border: 1px solid #c5d2cc; border-radius: 8px; padding: 20px; margin: 20px 0; background: #fff; }
+.inbound-workspace fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 16px; align-items: end; }
+.inbound-workspace label { display: flex; flex-direction: column; gap: 6px; min-width: 160px; }
+.inbound-workspace input, .inbound-workspace select { padding: 10px; border: 1px solid #94aaa0; border-radius: 4px; font: inherit; max-width: 100%; }
+.inbound-order p, .inbound-order small { overflow-wrap: anywhere; }
+.inbound-workspace fieldset:disabled { opacity: .65; }

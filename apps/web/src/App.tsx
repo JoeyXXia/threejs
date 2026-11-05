@@ -4,6 +4,7 @@ import { Link, Navigate, NavLink, Route, Routes, useParams } from 'react-router-
 import { useQueryClient } from '@tanstack/react-query';
 import { ApiError, api } from './api';
 import { WarehouseView } from './warehouse/WarehouseView';
+import { InboundView } from './inbound/InboundView';
 
 type Warehouse = { id: string; spaceId: string; name: string; version: number; role: 'ADMIN' | 'OPERATOR' | 'VIEWER' };
 type Session = { user: { id: string; email: string }; expiresAt: string; warehouses: Warehouse[] };
@@ -21,11 +22,12 @@ function parseSession(value: unknown): Session {
 
 const warehousePath = (warehouse: Warehouse) => `/warehouses/${warehouse.spaceId}/${warehouse.id}`;
 
-function WarehouseRoute({ session, onUnauthorized }: { session: Session; onUnauthorized: () => void }) {
+function WarehouseRoute({ session, onUnauthorized, inbound = false }: { session: Session; onUnauthorized: () => void; inbound?: boolean }) {
   const { spaceId, warehouseId } = useParams();
   const warehouse = session.warehouses.find((entry) => entry.id === warehouseId && entry.spaceId === spaceId);
   if (!warehouse) return <section role="alert" className="error-state"><h1>仓库不可访问</h1><p>当前身份没有该仓库的访问权限。</p><Link to="/account">查看授权仓库</Link></section>;
-  return <WarehouseView key={`${session.user.id}:${warehouse.spaceId}:${warehouse.id}`} userId={session.user.id}
+  const View = inbound ? InboundView : WarehouseView;
+  return <View key={`${session.user.id}:${warehouse.spaceId}:${warehouse.id}`} userId={session.user.id}
     spaceId={warehouse.spaceId} warehouseId={warehouse.id} name={warehouse.name} onUnauthorized={onUnauthorized} />;
 }
 
@@ -100,7 +102,7 @@ export function App() {
   }
 
   return <main className={session ? 'app-shell' : 'login-shell'}>
-    <header><Link to="/" className="brand">WT / WarehouseTwin</Link><span>DAY 06 · 仓库浏览与库存</span></header>
+    <header><Link to="/" className="brand">WT / WarehouseTwin</Link><span>DAY 08 · 入库与质检</span></header>
     {!session && <><p className="eyebrow">仓储业务 × 空间可视化</p>
       <h1>每一个位置，<br />都连接后端业务数据。</h1>
       <p className="intro">登录后读取仓库布局和批次库存，生成参数化 3D 场景。设备为软件模拟。</p></>}
@@ -125,10 +127,12 @@ export function App() {
       </section>
       <div className="dashboard"><aside><p className="nav-label">获授权仓库</p><nav aria-label="主导航">
         {session.warehouses.map((warehouse) => <NavLink key={warehouse.id} to={warehousePath(warehouse)}>{warehouse.name}<small>{warehouse.role}</small></NavLink>)}
+        {session.warehouses.map((warehouse) => <NavLink key={`inbound:${warehouse.id}`} to={`${warehousePath(warehouse)}/inbound`}>{warehouse.name} 入库与质检</NavLink>)}
         <NavLink to="/account">仓库资料</NavLink></nav><p className="view-note">库存来源：PostgreSQL<br />设备：软件模拟<br />更新方式：手动刷新</p></aside>
       <Routes>
         <Route path="/" element={<Navigate replace to={session.warehouses[0] ? warehousePath(session.warehouses[0]) : '/account'} />} />
         <Route path="/warehouses/:spaceId/:warehouseId" element={<WarehouseRoute session={session} onUnauthorized={forgetSession} />} />
+        <Route path="/warehouses/:spaceId/:warehouseId/inbound" element={<WarehouseRoute session={session} onUnauthorized={forgetSession} inbound />} />
         <Route path="/account" element={<section className="warehouse-list" aria-label="获授权仓库资料">
         <div><p className="eyebrow">账户 / 仓库资料</p><h1>访问与资料</h1></div>
         {session.warehouses.map((warehouse) => <article key={warehouse.id}>

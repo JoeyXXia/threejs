@@ -10,3 +10,4 @@ coverage/
 .local/
 reports/*.json
 output/playwright/
+.playwright-cli/
