@@ -88,3 +88,5 @@ td button, th button { padding: 5px 10px; font-size: 12px; }
 .inbound-workspace input, .inbound-workspace select { padding: 10px; border: 1px solid #94aaa0; border-radius: 4px; font: inherit; max-width: 100%; }
 .inbound-order p, .inbound-order small { overflow-wrap: anywhere; }
 .inbound-workspace fieldset:disabled { opacity: .65; }
+.inbound-order table { width: 100%; table-layout: fixed; border-collapse: collapse; margin-top: 16px; }
+.inbound-order th, .inbound-order td { padding: 8px; text-align: left; border-bottom: 1px solid #c5d2cc; overflow-wrap: anywhere; }

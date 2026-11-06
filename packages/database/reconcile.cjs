@@ -24,7 +24,28 @@ async function reconcile(tx) {
   `;
 }
 
-module.exports = { reconcile };
+// Reservations are not physical movements: verify both balance and order totals separately.
+async function reconcileReservations(tx) {
+  return tx.$queryRaw`
+    WITH allocated AS (
+      SELECT a."balanceId", sum(a.quantity)::bigint AS expected FROM "Allocation" a
+      JOIN "OutboundOrder" o ON o.id=a."orderId" WHERE o.status='ALLOCATED' GROUP BY a."balanceId"
+    ), balance_differences AS (
+      SELECT 'BALANCE'::text AS kind, b.id, b.reserved::text AS actual, coalesce(a.expected,0)::text AS expected
+      FROM "InventoryBalance" b LEFT JOIN allocated a ON a."balanceId"=b.id
+      WHERE b.reserved <> coalesce(a.expected,0)
+    ), order_totals AS (
+      SELECT o.id, o.status, o.quantity, coalesce(sum(a.quantity),0)::bigint AS actual
+      FROM "OutboundOrder" o LEFT JOIN "Allocation" a ON a."orderId"=o.id GROUP BY o.id
+    )
+    SELECT * FROM balance_differences
+    UNION ALL
+    SELECT 'ORDER'::text, id, actual::text, (CASE WHEN status='ALLOCATED' THEN quantity ELSE 0 END)::text
+    FROM order_totals WHERE actual <> CASE WHEN status='ALLOCATED' THEN quantity ELSE 0 END
+    ORDER BY kind,id
+  `;
+}
+module.exports = { reconcile, reconcileReservations };
 if (require.main === module) {
   const db = new PrismaClient();
   db.$transaction(reconcile, { isolationLevel: 'RepeatableRead' })

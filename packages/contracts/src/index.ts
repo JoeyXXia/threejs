@@ -87,6 +87,38 @@ export const inboundListSchema = z.object({
 });
 export type InboundListResponse = z.infer<typeof inboundListSchema>;
 
+export const createOutboundSchema = z.object({
+  key: z.string().trim().min(8).max(100), skuId: id, batchId: id,
+  quantity: z.number().int().positive().max(1000000), reason: z.string().trim().min(1).max(200),
+}).strict();
+export type CreateOutboundInput = z.infer<typeof createOutboundSchema>;
+export const outboundOrderSchema = z.object({
+  id, spaceId: id, warehouseId: id, skuId: id, skuCode: z.string(), batchId: id, batchCode: z.string(),
+  expiresAt: timestamp.nullable(), quantity: z.number().int().positive(), status: z.enum(['CREATED', 'ALLOCATED']), version: quantity,
+  reason: z.string(), allocationReason: z.string().nullable(), createdById: id, allocatedById: id.nullable(),
+  createdAt: timestamp, allocatedAt: timestamp.nullable(),
+  allocations: z.array(z.object({ id, balanceId: id, locationId: id, locationCode: z.string(), quantity: z.number().int().positive() })),
+}).superRefine((value, ctx) => {
+  if (new Set(value.allocations.map((row) => row.balanceId)).size !== value.allocations.length
+    || (value.status === 'CREATED' && (value.allocations.length > 0 || value.allocatedAt !== null || value.allocatedById !== null))
+    || (value.status === 'ALLOCATED' && (value.allocations.reduce((sum, row) => sum + row.quantity, 0) !== value.quantity || value.allocatedAt === null || value.allocatedById === null))) {
+    ctx.addIssue({ code: 'custom', message: 'Allocation quantities or phase mismatch' });
+  }
+});
+export type OutboundOrderResponse = z.infer<typeof outboundOrderSchema>;
+export const outboundListSchema = z.object({
+  spaceId: id, warehouseId: id, role: z.enum(['ADMIN', 'OPERATOR', 'VIEWER']), asOf: timestamp,
+  skus: z.array(z.object({ id, code: z.string() })),
+  recommendations: z.array(z.object({ skuId: id, batchId: id, batchCode: z.string(), expiresAt: timestamp.nullable(), available: z.number().int().positive() })),
+  orders: z.array(outboundOrderSchema), hasMore: z.boolean(),
+}).superRefine((value, ctx) => {
+  if (value.orders.some((row) => row.spaceId !== value.spaceId || row.warehouseId !== value.warehouseId)
+    || value.recommendations.some((row) => !value.skus.some((sku) => sku.id === row.skuId) || (row.expiresAt && Date.parse(row.expiresAt) <= Date.parse(value.asOf)))) {
+    ctx.addIssue({ code: 'custom', message: 'Outbound scope or recommendation mismatch' });
+  }
+});
+export type OutboundListResponse = z.infer<typeof outboundListSchema>;
+
 export function validateSnapshot(layout: LayoutResponse, inventory: InventoryResponse, spaceId: string, warehouseId: string): WarehouseSnapshot {
   if (layout.spaceId !== spaceId || inventory.spaceId !== spaceId || layout.warehouseId !== warehouseId || inventory.warehouseId !== warehouseId) {
     throw new Error('Warehouse scope mismatch');

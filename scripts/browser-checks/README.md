@@ -54,3 +54,21 @@ npx --yes --package @playwright/cli playwright-cli -s=warehouse-day8 run-code --
 ```
 
 inbound 回调真实提交两单，验证后端收货成功却丢失响应后的原 key 重试、3 件放行、2 件过期拒绝、整页重载及 3D/2D/API 对照。普通 seed 首次执行结果为现存 67、可用 58、预占 0、HOLD 9；重复执行会新建不同批次并增加数量，不是重置脚本。access 验证 B 仓只读及切仓隔离；expiry 验证清单/表单退出。截图在 `output/playwright/day-08`，仅合成测试记录，不包含开发口令。截图核对后可复制到 reports 作为证据；结束关闭本次会话并向 QA 终端发送 stop。
+
+## Day 9 出库与预占
+
+启动新的 `pnpm qa:browser` 临时环境，不执行 reserve/layout-v2，也不复用已经预占的旧 QA 数据。以下从仓库根目录执行，snapshot 后使用当前 ref 登录：
+
+```powershell
+npx --yes --package @playwright/cli playwright-cli -s=warehouse-day9 open http://127.0.0.1:15174 --browser chrome
+npx --yes --package @playwright/cli playwright-cli -s=warehouse-day9 snapshot
+# 登录并读取场景 snapshot 后，逐条执行：
+npx --yes --package @playwright/cli playwright-cli -s=warehouse-day9 run-code --filename scripts/browser-checks/day9-outbound.js
+npx --yes --package @playwright/cli playwright-cli -s=warehouse-day9 run-code --filename scripts/browser-checks/day9-access.js
+# QA 终端执行 expire，保持在 A 仓出库页，再运行：
+npx --yes --package @playwright/cli playwright-cli -s=warehouse-day9 run-code --filename scripts/browser-checks/day9-session-expiry.js
+npx --yes --package @playwright/cli playwright-cli -s=warehouse-day9 close
+# 最后向 QA 终端发送 stop。
+```
+
+outbound 回调要求起始 SKU-A/B01 储存区可分配 25，真实创建 18 件并预占；模拟后端已提交但响应丢失，验证原 key 重试只增加一次。再创建 8 件，验证剩余 7 件时整单拒绝；刷新后核对分配与 3D/2D/API，最终现存/可用/预占/HOLD 为 62/37/18/7。该脚本有实际写入，不能在同一库重复执行冒充首次验收。access 检查只读与切仓；expiry 检查退出后出库记录和表单清除。截图保存于 `output/playwright/day-09`，人工查看后复制到 reports；仅关闭本次命名浏览器，不影响其他会话。

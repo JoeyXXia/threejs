@@ -25,6 +25,8 @@ model User {
   createdInbound InboundOrder[] @relation("InboundCreator")
   receivedInbound InboundOrder[] @relation("InboundReceiver")
   inspectedInbound InboundOrder[] @relation("InboundInspector")
+  createdOutbound OutboundOrder[] @relation("OutboundCreator")
+  allocatedOutbound OutboundOrder[] @relation("OutboundAllocator")
 }
 
 model Space {
@@ -51,6 +53,7 @@ model Warehouse {
   locations Location[]
   skus Sku[]
   inboundOrders InboundOrder[]
+  outboundOrders OutboundOrder[]
   @@unique([spaceId, id])
 }
 
@@ -84,6 +87,11 @@ enum InboundStatus {
   RECEIVED
   PASSED
   REJECTED
+}
+
+enum OutboundStatus {
+  CREATED
+  ALLOCATED
 }
 
 model LayoutVersion {
@@ -208,6 +216,7 @@ model Batch {
   balances InventoryBalance[]
   movements InventoryMovement[]
   inboundOrders InboundOrder[]
+  outboundOrders OutboundOrder[]
   @@unique([spaceId, warehouseId, skuId, id])
   @@unique([spaceId, warehouseId, skuId, code])
 }
@@ -226,7 +235,51 @@ model InventoryBalance {
   updatedAt DateTime @updatedAt
   location Location @relation(fields: [spaceId, warehouseId, locationId], references: [spaceId, warehouseId, id], onDelete: Restrict)
   batch Batch @relation(fields: [spaceId, warehouseId, skuId, batchId], references: [spaceId, warehouseId, skuId, id], onDelete: Restrict)
+  allocations Allocation[]
   @@unique([spaceId, warehouseId, locationId, skuId, batchId, quality])
+  @@unique([spaceId, warehouseId, locationId, skuId, batchId, quality, id], map: "balance_allocation_scope_key")
+}
+
+model OutboundOrder {
+  id String @id @default(uuid()) @db.Uuid
+  spaceId String @db.Uuid
+  warehouseId String @db.Uuid
+  skuId String @db.Uuid
+  batchId String @db.Uuid
+  quantity Int
+  status OutboundStatus @default(CREATED)
+  version Int @default(0)
+  reason String
+  allocationReason String?
+  createdById String @db.Uuid
+  allocatedById String? @db.Uuid
+  createdAt DateTime @default(now())
+  allocatedAt DateTime?
+  warehouse Warehouse @relation(fields: [spaceId, warehouseId], references: [spaceId, id], onDelete: Restrict, onUpdate: NoAction)
+  batch Batch @relation(fields: [spaceId, warehouseId, skuId, batchId], references: [spaceId, warehouseId, skuId, id], onDelete: Restrict, onUpdate: NoAction)
+  createdBy User @relation("OutboundCreator", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  allocatedBy User? @relation("OutboundAllocator", fields: [allocatedById], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  allocations Allocation[]
+  @@unique([spaceId, warehouseId, skuId, batchId, id], map: "outbound_allocation_scope_key")
+  @@index([spaceId, warehouseId, createdAt])
+}
+
+model Allocation {
+  id String @id @default(uuid()) @db.Uuid
+  spaceId String @db.Uuid
+  warehouseId String @db.Uuid
+  orderId String @db.Uuid
+  balanceId String @db.Uuid
+  locationId String @db.Uuid
+  skuId String @db.Uuid
+  batchId String @db.Uuid
+  quality Quality @default(RELEASED)
+  quantity Int
+  createdAt DateTime @default(now())
+  order OutboundOrder @relation(fields: [spaceId, warehouseId, skuId, batchId, orderId], references: [spaceId, warehouseId, skuId, batchId, id], onDelete: Restrict, onUpdate: NoAction)
+  balance InventoryBalance @relation(fields: [spaceId, warehouseId, locationId, skuId, batchId, quality, balanceId], references: [spaceId, warehouseId, locationId, skuId, batchId, quality, id], onDelete: Restrict, onUpdate: NoAction)
+  @@unique([orderId, balanceId])
+  @@index([balanceId])
 }
 
 // One SKU/batch, full receipt and full inspection; no partial operations in Day 8.

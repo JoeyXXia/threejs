@@ -55,6 +55,7 @@ try {
   try {
     const evidence = await db.$transaction(async (tx) => {
       const mismatches = await ledger.reconcile(tx);
+      const reservationMismatches = await ledger.reconcileReservations(tx);
       const warehouses = await tx.warehouse.findMany({ include: { activeLayout: true }, orderBy: { id: 'asc' } });
       const samples = [];
       for (const warehouse of warehouses) {
@@ -67,15 +68,16 @@ try {
           movements: await tx.inventoryMovement.count({ where }), skus: await tx.sku.count({ where }), batches: await tx.batch.count({ where }),
           onHand: totals._sum.onHand, reserved: totals._sum.reserved });
       }
-      return { capturedAt: new Date().toISOString(), databaseRestarted: true, consistent: mismatches.length === 0, mismatches, warehouses: samples };
+      return { capturedAt: new Date().toISOString(), databaseRestarted: true, consistent: mismatches.length === 0 && reservationMismatches.length === 0, mismatches, reservationMismatches, warehouses: samples };
     }, { isolationLevel: 'RepeatableRead' });
     results.push({ database: new URL(datasourceUrl).pathname.slice(1), ...evidence });
     if (!evidence.consistent) throw new Error('Post-restart inventory reconciliation failed');
-    console.log('PASS: database restart and full balance/ledger reconciliation');
+    console.log('PASS: database restart, physical ledger and reservation/order reconciliation');
   } finally { await db.$disconnect(); }
   }
   writeFileSync(`${root}/reports/integration-inventory.json`, JSON.stringify({ capturedAt: new Date().toISOString(), databaseRestarted: true,
-    consistent: results.every((result) => result.consistent), mismatches: results.flatMap((result) => result.mismatches), databases: results }, null, 2));
+    consistent: results.every((result) => result.consistent), mismatches: results.flatMap((result) => result.mismatches),
+    reservationMismatches: results.flatMap((result) => result.reservationMismatches), databases: results }, null, 2));
 } finally {
   if (started) await pg.stop();
 }

@@ -2,7 +2,7 @@
 
 WMS 业务驱动的智能仓库数字孪生演示系统。样本为合成数据，库存与流水由 PostgreSQL 持久化，设备为软件模拟。
 
-当前进度：Day 8。新增单 SKU/批次入库单、幂等收货到 QC/HOLD、全量质检通过/拒绝及操作记录；沿用 API 驱动 3D、搜索、相机、2D 列表和授权/可重算流水。[Day 8 报告](reports/day-08-acceptance.md)记录实际测试与限制；既有 [v0.1-scene](docs/releases/v0.1-scene.md) 保留为历史版本。当前没有发运/预占、运输任务、机器人、实时推送或回放。远程 CI 以对应提交的 Actions 为准，不以本地通过代替。
+当前进度：Day 9。新增单 SKU/指定批次出库单、FEFO 推荐、同批多储位原子预占、分配明细和预占对账；保留入库/质检与 API 驱动的 3D、2D、授权和库存流水。[Day 9 报告](reports/day-09-acceptance.md)记录实际测试与限制；既有 [v0.1-scene](docs/releases/v0.1-scene.md) 保留为历史版本。当前没有取消/自动释放、发运、运输任务、机器人、实时推送或回放。远程 CI 以对应提交的 Actions 为准，不以本地通过代替。
 
 ## 开发
 
@@ -53,13 +53,17 @@ pnpm test:integration
 
 Day 8 集成新增同一临时集群内的 `warehouse_twin_inbound_test` 和 API 13003，单独迁移/seed，防止入库测试数据改变旧授权/库存固定样例；重启后分别对账，两库证据在 `integration-inventory.json` 的 `databases` 中。既有开发库升级先 `pnpm db:generate`、`pnpm db:migrate`，不使用 reset。
 
+Day 9 出库集成沿用上述写测试库，API 使用 13005，每例独立建仓。重启后除原 onHand 流水对账，还调用 `reconcileReservations`，核对余额 reserved 与有效分配合计、订单数量与分配合计；顶层 consistent 同时要求两类差异为零。
+
 入库入口为侧栏“仓库名 入库与质检”，API 前缀 `/spaces/:spaceId/warehouses/:warehouseId/inbound-orders`：GET 列表/选择项、POST 创建、POST `:orderId/receive`、POST `:orderId/inspect`。写请求带 `key` 和 `reason`，质检另带 `decision=PASS/REJECT`；只允许 admin/operator。日期是 UTC，页面选择的到期日从零点开始到期。收货可接收过期批次到 HOLD，但放行会拒绝。只支持全量操作，不是部分收货或机器人搬运。外部变化仍手动刷新，自己的操作成功后精确重读相关 Query。
+
+出库入口为侧栏“仓库名 出库与预占”，API 前缀 `/spaces/:spaceId/warehouses/:warehouseId/outbound-orders`：GET 列表/推荐、POST 创建、POST `:orderId/allocate`。写请求带 `key`、`reason`，创建另带 `skuId`、`batchId`、`quantity`。创建不占库存；分配重新验证当前布局 STORAGE、RELEASED、未过期来源，同批不足整单拒绝，不自动跨批。QC 即使已放行也不计储存区可分配量，不能直接使用仓库汇总 available 代替。成功只增加 reserved，不改变 onHand、位置或物理流水。当前无盘点冻结模型；跨刷新未知创建结果先刷新核对，预占后到期不自动释放。
 
 浏览器复验：交互终端运行 `pnpm qa:browser`，使用独立临时 DB，不读取 `.env`。详见[验收说明](scripts/browser-checks/README.md)；当前已实测正常 Chrome 与禁用 WebGL 的独立会话。CLI 截图和快照保存在忽略的 `output/playwright/`，最终截图见 [Day 6 预览](reports/day-06-preview.png)。这不代表已完成跨设备性能测试。
 
 Day 3 只读入口：`GET /api/spaces/:spaceId/warehouses/:warehouseId/layout` 与同前缀 `/inventory`（直接 API 端口不带 `/api`）。需要登录 Cookie，viewer 可读，跨仓返回 404。返回布局版本、货位/服务点、货架阻挡和真实批次余额；空位显式返回 0，待检或到期库存不计 available。两个请求组合时应核对 layoutId/version 一致。
 
-每仓 seed 当前建立 17 个货位、2 SKU、2 批次与 11 条期初余额/流水，现存 62 件。数据来自[合成布局说明](data/layouts/README.md)，通过事务写入 DB，不在前端写死库存。`pnpm reconcile` 用完整流水重算 onHand，有差异以非零退出；它不是修复/重置脚本，不重算未来预占或任务状态。已有 Day 2 数据库也先 `pnpm db:generate`、`pnpm db:migrate`、`pnpm seed` 再启动，禁止用 reset 替代迁移。
+每仓 seed 当前建立 17 个货位、2 SKU、2 批次与 11 条期初余额/流水，现存 62 件。数据来自[合成布局说明](data/layouts/README.md)，通过事务写入 DB，不在前端写死库存。`pnpm reconcile` CLI 仍只用完整流水重算 onHand，有差异以非零退出；它不是修复/重置脚本。Day 9 预占/订单对账由集成入口调用，不包含在该 CLI 中。已有 Day 2 数据库也先 `pnpm db:generate`、`pnpm db:migrate`、`pnpm seed` 再启动，禁止用 reset 替代迁移。
 
 所有 HTTP 写请求（包括登录/退出）要求 `X-Requested-With: WarehouseTwin`，浏览器 Origin 还须命中 `WEB_ORIGINS`。开发使用 HttpOnly / SameSite=Strict Cookie；生产自动 Secure，需 HTTPS。登录尝试限制为单进程/IP 每分钟 10 次，不依赖 Redis。
 
@@ -82,6 +86,8 @@ Day 3 只读入口：`GET /api/spaces/:spaceId/warehouses/:warehouseId/layout` �
 - [Day 7 日志](docs/devlog/day-07.md) · [验收报告](reports/day-07-acceptance.md) · [演示录像](reports/day-07-demo.webm)
 - [入库与质检事务决策](docs/adr/0005-inbound-and-inspection.md)
 - [Day 8 日志](docs/devlog/day-08.md) · [验收报告](reports/day-08-acceptance.md)
+- [出库与预占事务决策](docs/adr/0006-outbound-allocation.md)
+- [Day 9 日志](docs/devlog/day-09.md) · [验收报告](reports/day-09-acceptance.md)
 - [项目总计划](doc/planning/WarehouseTwin-项目总计划.md)
 - [56 天每日计划](doc/planning/WarehouseTwin-56天每日计划.md)
 - [面试与 AI 协作](doc/planning/WarehouseTwin-面试与AI协作手册.md)

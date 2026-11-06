@@ -8,9 +8,11 @@ import { WarehouseController } from './warehouse.controller';
 import { InventoryController } from './inventory.controller';
 import { InboundController } from './inbound/inbound.controller';
 import { InboundService } from './inbound/inbound.service';
+import { OutboundController } from './outbound/outbound.controller';
+import { OutboundService } from './outbound/outbound.service';
 
 @Module({
-  controllers: [HealthController, AuthController, WarehouseController, InventoryController, InboundController],
-  providers: [DatabaseService, AuthService, AuthGuard, InboundService],
+  controllers: [HealthController, AuthController, WarehouseController, InventoryController, InboundController, OutboundController],
+  providers: [DatabaseService, AuthService, AuthGuard, InboundService, OutboundService],
 })
 export class AppModule {}
