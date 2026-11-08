@@ -5,6 +5,11 @@ import { uuidInput } from './auth/input';
 import { DatabaseService } from './database.service';
 import type { LayoutResponse, InventoryResponse } from '@warehouse-twin/contracts';
 
+function physicalKind(kind: LayoutResponse['locations'][number]['kind'] | 'TRANSIT') {
+  if (kind === 'TRANSIT') throw new Error('Transit cannot be placed on the physical layout');
+  return kind;
+}
+
 @Controller('spaces/:spaceId/warehouses/:warehouseId')
 @UseGuards(AuthGuard)
 export class InventoryController {
@@ -38,12 +43,12 @@ export class InventoryController {
         spaceId, warehouseId,
         layoutVersion: { id: layout.id, version: layout.version, width: layout.width, depth: layout.depth,
           cellSize: layout.cellSize, origin: { x: layout.originX, z: layout.originZ } },
-        zones: zones.map((zone) => ({ id: zone.id, code: zone.code, kind: zone.kind,
+        zones: zones.map((zone) => ({ id: zone.id, code: zone.code, kind: physicalKind(zone.kind),
           gridX: zone.gridX, gridZ: zone.gridZ, sizeX: zone.sizeX, sizeZ: zone.sizeZ })),
         racks: racks.map((rack) => ({ id: rack.id, code: rack.code, zoneId: rack.zoneId, gridX: rack.gridX,
           gridZ: rack.gridZ, sizeX: rack.sizeX, sizeZ: rack.sizeZ, levels: rack.levels, levelHeight: rack.levelHeight })),
         locations: placements.map((placement) => ({ id: placement.locationId, code: placement.location.code,
-          kind: placement.location.kind, zoneId: placement.zoneId, rackId: placement.rackId,
+          kind: physicalKind(placement.location.kind), zoneId: placement.zoneId, rackId: placement.rackId,
           grid: { x: placement.gridX, z: placement.gridZ, level: placement.level }, capacity: placement.capacity,
           serviceCell: { x: placement.serviceX, z: placement.serviceZ } })),
         blockedCells,
@@ -57,14 +62,16 @@ export class InventoryController {
       const asOf = new Date();
       const layout = await tx.layoutVersion.findUniqueOrThrow({ where: { id: layoutId } });
       const rows = await tx.inventoryBalance.findMany({
-        where: { spaceId, warehouseId }, include: { batch: { include: { sku: true } } }, orderBy: { id: 'asc' },
+        where: { spaceId, warehouseId }, include: { batch: { include: { sku: true } }, location: true }, orderBy: { id: 'asc' },
       });
       const placements = await tx.layoutLocation.findMany({ where: { layoutId }, include: { location: true }, orderBy: { location: { code: 'asc' } } });
-      const balances = rows.map<InventoryResponse['balances'][number]>((balance) => {
+      const placed = new Set(placements.map((placement) => placement.locationId));
+      const balances = rows.filter((row) => row.onHand > 0 || placed.has(row.locationId)).map<InventoryResponse['balances'][number]>((balance) => {
         const unit = balance.batch.sku.unit;
         if (unit !== 'piece') throw new Error('Unsupported inventory unit');
         return {
         id: balance.id, locationId: balance.locationId, quality: balance.quality, onHand: balance.onHand,
+          ...(balance.location.kind === 'TRANSIT' ? { transit: true as const } : {}),
         reserved: balance.reserved, version: balance.version,
         available: balance.quality === 'RELEASED' && (!balance.batch.expiresAt || balance.batch.expiresAt > asOf)
           ? balance.onHand - balance.reserved : 0,

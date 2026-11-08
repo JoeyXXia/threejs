@@ -9,5 +9,6 @@ coverage/
 *.tsbuildinfo
 .local/
 reports/*.json
+reports/integration-transport.tap
 output/playwright/
 .playwright-cli/

@@ -4,7 +4,7 @@ async function reconcile(tx) {
   return tx.$queryRaw`
     WITH postings AS (
       SELECT "spaceId", "warehouseId", "destinationLocationId" AS "locationId", "skuId", "batchId",
-        "destinationQuality" AS quality, quantity::bigint AS delta FROM "InventoryMovement"
+        "destinationQuality" AS quality, quantity::bigint AS delta FROM "InventoryMovement" WHERE "destinationLocationId" IS NOT NULL
       UNION ALL
       SELECT "spaceId", "warehouseId", "sourceLocationId", "skuId", "batchId", "sourceQuality", -quantity::bigint
         FROM "InventoryMovement" WHERE "sourceLocationId" IS NOT NULL
@@ -28,20 +28,49 @@ async function reconcile(tx) {
 async function reconcileReservations(tx) {
   return tx.$queryRaw`
     WITH allocated AS (
-      SELECT a."balanceId", sum(a.quantity)::bigint AS expected FROM "Allocation" a
-      JOIN "OutboundOrder" o ON o.id=a."orderId" WHERE o.status='ALLOCATED' GROUP BY a."balanceId"
+      SELECT a."spaceId", a."warehouseId", a."skuId", a."batchId", a.quality,
+        CASE t.phase WHEN 'IN_TRANSIT' THEN t."transitLocationId" WHEN 'STAGED' THEN t."stagingLocationId"
+          ELSE a."locationId" END AS "locationId", sum(a.quantity)::bigint AS expected
+      FROM "Allocation" a JOIN "OutboundOrder" o ON o.id=a."orderId"
+      LEFT JOIN "TransportTask" t ON t."allocationId"=a.id
+      WHERE o.status='ALLOCATED' GROUP BY 1,2,3,4,5,6
     ), balance_differences AS (
-      SELECT 'BALANCE'::text AS kind, b.id, b.reserved::text AS actual, coalesce(a.expected,0)::text AS expected
-      FROM "InventoryBalance" b LEFT JOIN allocated a ON a."balanceId"=b.id
-      WHERE b.reserved <> coalesce(a.expected,0)
+      SELECT 'BALANCE'::text AS kind, coalesce(b.id,a."locationId") AS id,
+        coalesce(b.reserved,0)::text AS actual, coalesce(a.expected,0)::text AS expected
+      FROM "InventoryBalance" b FULL JOIN allocated a USING ("spaceId","warehouseId","skuId","batchId",quality,"locationId")
+      WHERE coalesce(b.reserved,0) <> coalesce(a.expected,0)
     ), order_totals AS (
-      SELECT o.id, o.status, o.quantity, coalesce(sum(a.quantity),0)::bigint AS actual
-      FROM "OutboundOrder" o LEFT JOIN "Allocation" a ON a."orderId"=o.id GROUP BY o.id
+      SELECT o.id, o.status, o.quantity, coalesce(sum(a.quantity),0)::bigint AS actual,
+        coalesce(sum(a.quantity) FILTER (WHERE t.phase='STAGED'),0)::bigint AS staged
+      FROM "OutboundOrder" o LEFT JOIN "Allocation" a ON a."orderId"=o.id
+      LEFT JOIN "TransportTask" t ON t."allocationId"=a.id GROUP BY o.id
+    ), transit_totals AS (
+      SELECT l.id, coalesce(sum(b."onHand"),0)::bigint AS actual,
+        CASE WHEN t.phase='IN_TRANSIT' THEN a.quantity ELSE 0 END AS expected
+      FROM "Location" l LEFT JOIN "TransportTask" t ON t."transitLocationId"=l.id
+      LEFT JOIN "Allocation" a ON a.id=t."allocationId"
+      LEFT JOIN "InventoryBalance" b ON b."locationId"=l.id
+      WHERE l.kind='TRANSIT' GROUP BY l.id,t.phase,a.quantity
+    ), staging_totals AS (
+      SELECT l.id, coalesce(sum(b."onHand"),0)::bigint + staging_reserved(l.id) AS actual, coalesce(p.capacity,0) AS expected
+      FROM "Location" l JOIN "Warehouse" w ON w.id=l."warehouseId"
+      LEFT JOIN "LayoutLocation" p ON p."layoutId"=w."activeLayoutId" AND p."locationId"=l.id
+      LEFT JOIN "InventoryBalance" b ON b."locationId"=l.id
+      WHERE l.kind='OUTBOUND' GROUP BY l.id,p.capacity
     )
     SELECT * FROM balance_differences
     UNION ALL
-    SELECT 'ORDER'::text, id, actual::text, (CASE WHEN status='ALLOCATED' THEN quantity ELSE 0 END)::text
-    FROM order_totals WHERE actual <> CASE WHEN status='ALLOCATED' THEN quantity ELSE 0 END
+    SELECT 'ORDER'::text, id, actual::text, (CASE WHEN status='CREATED' THEN 0 ELSE quantity END)::text
+    FROM order_totals WHERE actual <> CASE WHEN status='CREATED' THEN 0 ELSE quantity END
+    UNION ALL
+    SELECT 'DISPATCH'::text, id, staged::text, quantity::text
+    FROM order_totals WHERE status='DISPATCHED' AND staged <> quantity
+    UNION ALL
+    SELECT 'TRANSIT'::text, id, actual::text, expected::text
+    FROM transit_totals WHERE actual <> expected
+    UNION ALL
+    SELECT 'CAPACITY'::text, id, actual::text, expected::text
+    FROM staging_totals WHERE actual > expected
     ORDER BY kind,id
   `;
 }

@@ -32,7 +32,7 @@ export const layoutSchema = z.object({
 
 export const inventorySchema = z.object({
   spaceId: id, warehouseId: id, layoutId: id, layoutVersion: z.number().int().positive(), asOf: z.string().datetime(),
-  balances: z.array(z.object({ id, locationId: id, quality: z.enum(['HOLD', 'RELEASED']), ...totals, version: quantity,
+  balances: z.array(z.object({ id, locationId: id, quality: z.enum(['HOLD', 'RELEASED']), ...totals, version: quantity, transit: z.literal(true).optional(),
     sku: z.object({ id, code: z.string(), name: z.string(), unit: z.literal('piece') }),
     batch: z.object({ id, code: z.string(), expiresAt: z.string().datetime().nullable() }) })),
   locationTotals: z.array(z.object({ locationId: id, code: z.string(), capacity: z.number().int().positive(), ...totals })),
@@ -44,7 +44,8 @@ export const inventorySchema = z.object({
   for (const balance of data.balances) {
     const expected = balance.quality === 'RELEASED' && (!balance.batch.expiresAt || Date.parse(balance.batch.expiresAt) > Date.parse(data.asOf))
       ? balance.onHand - balance.reserved : 0;
-    if (balance.reserved > balance.onHand || balance.available !== expected) fail();
+    if (balance.reserved > balance.onHand || balance.available !== expected
+      || (balance.transit && (balance.quality !== 'RELEASED' || balance.onHand <= 0 || balance.reserved !== balance.onHand))) fail();
   }
   for (const key of ['onHand', 'reserved', 'available'] as const) {
     if (data.summary[key] !== data.balances.reduce((sum, row) => sum + row[key], 0)) fail();
@@ -94,14 +95,14 @@ export const createOutboundSchema = z.object({
 export type CreateOutboundInput = z.infer<typeof createOutboundSchema>;
 export const outboundOrderSchema = z.object({
   id, spaceId: id, warehouseId: id, skuId: id, skuCode: z.string(), batchId: id, batchCode: z.string(),
-  expiresAt: timestamp.nullable(), quantity: z.number().int().positive(), status: z.enum(['CREATED', 'ALLOCATED']), version: quantity,
+  expiresAt: timestamp.nullable(), quantity: z.number().int().positive(), status: z.enum(['CREATED', 'ALLOCATED', 'DISPATCHED']), version: quantity,
   reason: z.string(), allocationReason: z.string().nullable(), createdById: id, allocatedById: id.nullable(),
   createdAt: timestamp, allocatedAt: timestamp.nullable(),
   allocations: z.array(z.object({ id, balanceId: id, locationId: id, locationCode: z.string(), quantity: z.number().int().positive() })),
 }).superRefine((value, ctx) => {
   if (new Set(value.allocations.map((row) => row.balanceId)).size !== value.allocations.length
     || (value.status === 'CREATED' && (value.allocations.length > 0 || value.allocatedAt !== null || value.allocatedById !== null))
-    || (value.status === 'ALLOCATED' && (value.allocations.reduce((sum, row) => sum + row.quantity, 0) !== value.quantity || value.allocatedAt === null || value.allocatedById === null))) {
+    || (value.status !== 'CREATED' && (value.allocations.reduce((sum, row) => sum + row.quantity, 0) !== value.quantity || value.allocatedAt === null || value.allocatedById === null))) {
     ctx.addIssue({ code: 'custom', message: 'Allocation quantities or phase mismatch' });
   }
 });
@@ -126,6 +127,6 @@ export function validateSnapshot(layout: LayoutResponse, inventory: InventoryRes
   if (layout.layoutVersion.id !== inventory.layoutId || layout.layoutVersion.version !== inventory.layoutVersion) throw new Error('Layout version mismatch');
   const locations = new Map(layout.locations.map((location) => [location.id, location]));
   if (inventory.locationTotals.length !== locations.size || inventory.locationTotals.some((row) => locations.get(row.locationId)?.capacity !== row.capacity)
-    || inventory.balances.some((row) => !locations.has(row.locationId))) throw new Error('Inventory location mismatch');
+    || inventory.balances.some((row) => row.transit ? locations.has(row.locationId) : !locations.has(row.locationId))) throw new Error('Inventory location mismatch');
   return { layout, inventory };
 }

@@ -64,6 +64,7 @@ enum ZoneKind {
   PICKING
   OUTBOUND
   CHARGING
+  TRANSIT
 }
 
 enum LayoutStatus {
@@ -80,6 +81,7 @@ enum MovementKind {
   OPENING
   TRANSFER
   RECEIPT
+  DISPATCH
 }
 
 enum InboundStatus {
@@ -92,6 +94,13 @@ enum InboundStatus {
 enum OutboundStatus {
   CREATED
   ALLOCATED
+  DISPATCHED
+}
+
+enum TransportPhase {
+  READY
+  IN_TRANSIT
+  STAGED
 }
 
 model LayoutVersion {
@@ -165,6 +174,8 @@ model Location {
   balances InventoryBalance[]
   movementsFrom InventoryMovement[] @relation("MovementSource")
   movementsTo InventoryMovement[] @relation("MovementDestination")
+  transitTasks TransportTask[] @relation("TransitLocation")
+  stagingTasks TransportTask[] @relation("StagingLocation")
   inboundOrders InboundOrder[]
   @@unique([spaceId, warehouseId, id])
   @@unique([spaceId, warehouseId, code])
@@ -278,8 +289,26 @@ model Allocation {
   createdAt DateTime @default(now())
   order OutboundOrder @relation(fields: [spaceId, warehouseId, skuId, batchId, orderId], references: [spaceId, warehouseId, skuId, batchId, id], onDelete: Restrict, onUpdate: NoAction)
   balance InventoryBalance @relation(fields: [spaceId, warehouseId, locationId, skuId, batchId, quality, balanceId], references: [spaceId, warehouseId, locationId, skuId, batchId, quality, id], onDelete: Restrict, onUpdate: NoAction)
+  task TransportTask?
   @@unique([orderId, balanceId])
+  @@unique([spaceId, warehouseId, id], map: "allocation_task_scope_key")
   @@index([balanceId])
+}
+
+// READY and IN_TRANSIT tasks reserve their allocation's quantity at staging.
+model TransportTask {
+  id String @id @default(uuid()) @db.Uuid
+  spaceId String @db.Uuid
+  warehouseId String @db.Uuid
+  allocationId String @unique @db.Uuid
+  transitLocationId String @unique @db.Uuid
+  stagingLocationId String @db.Uuid
+  phase TransportPhase @default(READY)
+  allocation Allocation @relation(fields: [spaceId, warehouseId, allocationId], references: [spaceId, warehouseId, id], onDelete: Restrict, onUpdate: NoAction)
+  transit Location @relation("TransitLocation", fields: [spaceId, warehouseId, transitLocationId], references: [spaceId, warehouseId, id], onDelete: Restrict, onUpdate: NoAction)
+  staging Location @relation("StagingLocation", fields: [spaceId, warehouseId, stagingLocationId], references: [spaceId, warehouseId, id], onDelete: Restrict, onUpdate: NoAction)
+  @@unique([spaceId, warehouseId, allocationId], map: "task_allocation_scope_key")
+  @@index([stagingLocationId, phase])
 }
 
 // One SKU/batch, full receipt and full inspection; no partial operations in Day 8.
@@ -312,7 +341,7 @@ model InboundOrder {
   @@index([spaceId, warehouseId, createdAt])
 }
 
-// One complete transfer record (source nullable only for an external receipt).
+// External receipts have no source; dispatches have no destination.
 model InventoryMovement {
   id String @id @default(uuid()) @db.Uuid
   spaceId String @db.Uuid
@@ -322,8 +351,8 @@ model InventoryMovement {
   kind MovementKind
   sourceLocationId String? @db.Uuid
   sourceQuality Quality?
-  destinationLocationId String @db.Uuid
-  destinationQuality Quality
+  destinationLocationId String? @db.Uuid
+  destinationQuality Quality?
   quantity Int
   businessKey String
   actorType String
@@ -333,7 +362,7 @@ model InventoryMovement {
   createdAt DateTime @default(now())
   batch Batch @relation(fields: [spaceId, warehouseId, skuId, batchId], references: [spaceId, warehouseId, skuId, id], onDelete: Restrict)
   source Location? @relation("MovementSource", fields: [spaceId, warehouseId, sourceLocationId], references: [spaceId, warehouseId, id], onDelete: Restrict)
-  destination Location @relation("MovementDestination", fields: [spaceId, warehouseId, destinationLocationId], references: [spaceId, warehouseId, id], onDelete: Restrict)
+  destination Location? @relation("MovementDestination", fields: [spaceId, warehouseId, destinationLocationId], references: [spaceId, warehouseId, id], onDelete: Restrict)
   @@unique([spaceId, warehouseId, businessKey])
   @@index([spaceId, warehouseId, createdAt])
 }

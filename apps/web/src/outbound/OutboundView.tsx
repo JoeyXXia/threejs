@@ -63,7 +63,7 @@ export function OutboundView({ userId, spaceId, warehouseId, name, onUnauthorize
       <h2>出库记录</h2>{query.data.hasMore && <p>仅显示最近 100 单，更早记录暂不在此页面展示。</p>}
       {!query.data.orders.length && <p>暂无出库单。</p>}
       {query.data.orders.map((order) => <article className="inbound-order" key={order.id} aria-label={`出库单 ${order.id}`}>
-        <h3>{order.batchCode} · {order.status === 'ALLOCATED' ? '已预占' : '待预占'}</h3>
+        <h3>{order.batchCode} · {{ CREATED: '待预占', ALLOCATED: '已预占', DISPATCHED: '已发运' }[order.status]}</h3>
         <p>{order.skuCode} · {order.quantity} 件 · 到期 {order.expiresAt ?? '无到期日'}</p><small>单据 ID：{order.id}</small>
         <p>创建人：{order.createdById} · {order.createdAt} · {order.reason}</p>
         {order.allocatedAt && <p>预占人：{order.allocatedById} · {order.allocatedAt} · {order.allocationReason}</p>}

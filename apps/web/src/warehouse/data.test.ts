@@ -23,6 +23,21 @@ describe('runtime contracts and paired snapshots', () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => response(url.endsWith('/layout') ? value.layout : {})));
     await expect(loadSnapshot(value.layout.spaceId, value.layout.warehouseId, new AbortController().signal)).rejects.toThrow('响应格式');
   });
+  it('loads fully reserved transit stock into the warehouse summary without putting it on the layout', async () => {
+    const value = fixtureSnapshot();
+    const balance = value.inventory.balances[0]!;
+    balance.locationId = fixtureId(42);
+    balance.transit = true;
+    balance.reserved = 5;
+    balance.available = 0;
+    Object.assign(value.inventory.locationTotals[0]!, { onHand: 0, available: 0 });
+    Object.assign(value.inventory.summary, { reserved: 5, available: 0 });
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => response(url.endsWith('/layout') ? value.layout : value.inventory)));
+    const loaded = await loadSnapshot(value.layout.spaceId, value.layout.warehouseId, new AbortController().signal);
+    expect(loaded.inventory.summary).toEqual({ onHand: 5, reserved: 5, available: 0, hold: 0 });
+    delete balance.transit;
+    await expect(loadSnapshot(value.layout.spaceId, value.layout.warehouseId, new AbortController().signal)).rejects.toThrow('库存货位与布局不匹配');
+  });
   it('rejects malformed quantities, unknown locations and inconsistent totals', () => {
     const value = fixtureSnapshot();
     value.inventory.balances[0]!.onHand = -1;
