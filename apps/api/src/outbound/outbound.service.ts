@@ -31,7 +31,11 @@ export class OutboundService {
   private async eligible(tx: Prisma.TransactionClient, scope: Scope, now: Date, batchId?: string) {
     const { spaceId, warehouseId } = scope;
     const warehouse = await tx.warehouse.findUniqueOrThrow({ where: { id: warehouseId } });
-    const placements = warehouse.activeLayoutId ? await tx.layoutLocation.findMany({ where: { layoutId: warehouse.activeLayoutId, location: { kind: 'STORAGE' } }, select: { locationId: true } }) : [];
+    const placements = warehouse.activeLayoutId ? await tx.layoutLocation.findMany({
+      where: { layoutId: warehouse.activeLayoutId, location: { kind: 'STORAGE',
+        countOrders: { none: { status: { in: ['OPEN', 'SUBMITTED'] } } } } },
+      select: { locationId: true },
+    }) : [];
     return tx.inventoryBalance.findMany({ where: { spaceId, warehouseId, ...(batchId ? { batchId } : {}),
       locationId: { in: placements.map((row) => row.locationId) }, quality: 'RELEASED', onHand: { gt: 0 },
       batch: { OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] } },

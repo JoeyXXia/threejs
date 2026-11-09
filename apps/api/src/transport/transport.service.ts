@@ -50,6 +50,8 @@ export class TransportService {
           location: { kind: 'OUTBOUND' } },
       });
       if (!staging) throw new NotFoundException('暂存位不在当前仓库布局');
+      const [freeze] = await tx.$queryRaw<{ frozen: boolean }[]>`SELECT count_location_frozen(${stagingLocationId}::uuid) AS frozen`;
+      if (freeze?.frozen) throw new ConflictException('暂存位正在盘点，不能创建运输任务');
       const [capacity] = await tx.$queryRaw<{ used: bigint }[]>`SELECT staging_reserved(${stagingLocationId}::uuid)
         + coalesce(sum("onHand"), 0) AS used FROM "InventoryBalance" WHERE "locationId"=${stagingLocationId}::uuid`;
       if (!capacity || capacity.used + BigInt(allocation.quantity) > BigInt(staging.capacity)) {

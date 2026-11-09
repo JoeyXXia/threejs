@@ -82,6 +82,14 @@ enum MovementKind {
   TRANSFER
   RECEIPT
   DISPATCH
+  COUNT_ADJUSTMENT
+}
+
+enum CountStatus {
+  OPEN
+  SUBMITTED
+  APPROVED
+  REJECTED
 }
 
 enum InboundStatus {
@@ -120,6 +128,7 @@ model LayoutVersion {
   zones LayoutZone[]
   racks Rack[]
   placements LayoutLocation[]
+  countOrders CountOrder[]
   @@unique([spaceId, warehouseId, id])
   @@unique([spaceId, warehouseId, version])
 }
@@ -176,9 +185,41 @@ model Location {
   movementsTo InventoryMovement[] @relation("MovementDestination")
   transitTasks TransportTask[] @relation("TransitLocation")
   stagingTasks TransportTask[] @relation("StagingLocation")
+  countOrders CountOrder[]
   inboundOrders InboundOrder[]
   @@unique([spaceId, warehouseId, id])
   @@unique([spaceId, warehouseId, code])
+}
+
+model CountOrder {
+  id String @id @default(uuid()) @db.Uuid
+  spaceId String @db.Uuid
+  warehouseId String @db.Uuid
+  locationId String @db.Uuid
+  layoutId String @db.Uuid
+  status CountStatus @default(OPEN)
+  createdAt DateTime @default(now())
+  submissionNote String?
+  location Location @relation(fields: [spaceId, warehouseId, locationId], references: [spaceId, warehouseId, id], onDelete: Restrict, onUpdate: NoAction)
+  layout LayoutVersion @relation(fields: [spaceId, warehouseId, layoutId], references: [spaceId, warehouseId, id], onDelete: Restrict, onUpdate: NoAction)
+  lines CountLine[]
+  @@index([spaceId, warehouseId, createdAt])
+}
+
+// The captured identity remains available even if the original balance is later removed.
+model CountLine {
+  countId String @db.Uuid
+  balanceId String @db.Uuid
+  skuId String @db.Uuid
+  batchId String @db.Uuid
+  skuCode String
+  batchCode String
+  quality Quality
+  expected Int
+  balanceVersion Int
+  actual Int?
+  count CountOrder @relation(fields: [countId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  @@id([countId, balanceId])
 }
 
 model LayoutLocation {

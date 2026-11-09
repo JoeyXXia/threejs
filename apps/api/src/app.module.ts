@@ -11,9 +11,11 @@ import { InboundService } from './inbound/inbound.service';
 import { OutboundController } from './outbound/outbound.controller';
 import { OutboundService } from './outbound/outbound.service';
 import { TransportService } from './transport/transport.service';
+import { CountController } from './count/count.controller';
+import { CountService } from './count/count.service';
 
 @Module({
-  controllers: [HealthController, AuthController, WarehouseController, InventoryController, InboundController, OutboundController],
-  providers: [DatabaseService, AuthService, AuthGuard, InboundService, OutboundService, TransportService],
+  controllers: [HealthController, AuthController, WarehouseController, InventoryController, InboundController, OutboundController, CountController],
+  providers: [DatabaseService, AuthService, AuthGuard, InboundService, OutboundService, TransportService, CountService],
 })
 export class AppModule {}

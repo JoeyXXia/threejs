@@ -72,3 +72,18 @@ npx --yes --package @playwright/cli playwright-cli -s=warehouse-day9 close
 ```
 
 outbound 回调要求起始 SKU-A/B01 储存区可分配 25，真实创建 18 件并预占；模拟后端已提交但响应丢失，验证原 key 重试只增加一次。再创建 8 件，验证剩余 7 件时整单拒绝；刷新后核对分配与 3D/2D/API，最终现存/可用/预占/HOLD 为 62/37/18/7。该脚本有实际写入，不能在同一库重复执行冒充首次验收。access 检查只读与切仓；expiry 检查退出后出库记录和表单清除。截图保存于 `output/playwright/day-09`，人工查看后复制到 reports；仅关闭本次命名浏览器，不影响其他会话。
+
+## Day 11 盘点与审批
+
+从仓库根目录启动新的 `pnpm qa:browser`，使用普通 seed。在独立会话打开 QA 地址，按快照中的表单登录。依次执行：
+
+```powershell
+npx --yes --package @playwright/cli playwright-cli -s=warehouse-day11 open http://127.0.0.1:15174 --browser chrome
+npx --yes --package @playwright/cli playwright-cli -s=warehouse-day11 snapshot
+# 按当前快照登录后运行
+npx --yes --package @playwright/cli playwright-cli -s=warehouse-day11 run-code --filename scripts/browser-checks/day11-count.js
+npx --yes --package @playwright/cli playwright-cli -s=warehouse-day11 close
+# 最后向 QA 终端发送 stop
+```
+
+脚本冻结账面 9 件的储位，验证推荐下降、出库分配拒绝，录入 12 件并批准，然后拒绝空暂存位盘点。执行后重载验证终态，截图位于 `output/playwright/day-11`。每次执行需使用新 QA 库。

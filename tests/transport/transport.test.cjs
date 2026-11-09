@@ -8,6 +8,7 @@ const { reconcile, reconcileReservations } = require('../../packages/database/re
 const { TransportService } = require('../../apps/api/dist/transport/transport.service');
 const { OutboundService } = require('../../apps/api/dist/outbound/outbound.service');
 const { InventoryController } = require('../../apps/api/dist/inventory.controller');
+const { CountService } = require('../../apps/api/dist/count/count.service');
 
 const url = process.env.INBOUND_TEST_DATABASE_URL;
 if (!url || new URL(url).hostname !== '127.0.0.1' || new URL(url).pathname !== '/warehouse_twin_inbound_test') {
@@ -19,6 +20,7 @@ const transport = new TransportService(db);
 const concurrent = new TransportService(otherDb);
 const outbound = new OutboundService(db);
 const inventory = new InventoryController(db);
+const countsService = new CountService(otherDb);
 const note = 'Day 10 transport fixture';
 let scope, warehouseScope, skuId, batchId, stagingId;
 
@@ -231,5 +233,20 @@ test('authorization and endpoint checks reject cross-scope tasks and non-staging
   await assert.rejects(transport.take({ ...scope, actorId: viewer.id }, task.id, note), { status: 403 });
   assert.deepEqual(await postings(), []);
   assert.equal(await reservedCapacity(), 1n);
+  await assertReconciled();
+});
+
+test('staging freeze and active transport exclude each other even when the location has no stock', async () => {
+  const allocation = (await order(1)).allocations[0];
+  const openCount = () => countsService.create(scope, { locationId: stagingId, key: randomUUID(), reason: note });
+  const count = await openCount();
+  assert.deepEqual(count.lines, []);
+  await assert.rejects(create(allocation), { status: 409 });
+  await countsService.phase(scope, count.id, 'reject', { key: randomUUID(), reason: note });
+  const task = await create(allocation);
+  await assert.rejects(openCount(), { status: 409 });
+  await transport.take(scope, task.id, note);
+  assert.deepEqual(counts(await stock(), stagingId), [0, 0]);
+  await assert.rejects(openCount(), { status: 409 });
   await assertReconciled();
 });

@@ -60,6 +60,21 @@ export const inventorySchema = z.object({
 export type LayoutResponse = z.infer<typeof layoutSchema>;
 export type InventoryResponse = z.infer<typeof inventorySchema>;
 export type WarehouseSnapshot = { layout: LayoutResponse; inventory: InventoryResponse };
+export const countOrderSchema = z.object({
+  id, spaceId: id, warehouseId: id, locationId: id, locationCode: z.string(), createdAt: z.string().datetime(),
+  status: z.enum(['OPEN', 'SUBMITTED', 'APPROVED', 'REJECTED']), submissionNote: z.string().nullable(),
+  lines: z.array(z.object({
+    balanceId: id, skuCode: z.string(), batchCode: z.string(), quality: z.enum(['HOLD', 'RELEASED']),
+    expected: quantity, balanceVersion: quantity, actual: quantity.nullable(),
+  })),
+});
+export const countListSchema = z.object({
+  spaceId: id, warehouseId: id, role: z.enum(['ADMIN', 'OPERATOR', 'VIEWER']),
+  locations: z.array(z.object({ id, code: z.string(), frozen: z.boolean() })),
+  orders: z.array(countOrderSchema),
+});
+export type CountOrderResponse = z.infer<typeof countOrderSchema>;
+export type CountListResponse = z.infer<typeof countListSchema>;
 export type ZoneKind = z.infer<typeof kind>;
 
 const timestamp = z.string().datetime();

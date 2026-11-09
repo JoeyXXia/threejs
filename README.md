@@ -2,7 +2,7 @@
 
 WMS 业务驱动的智能仓库数字孪生演示系统。样本为合成数据，库存与流水由 PostgreSQL 持久化，设备为软件模拟。
 
-当前进度为 Day 10。内部领域服务支持按已预占的出库分配创建运输任务、预留暂存容量、取货进在途位、卸到暂存位和整单发运。当前通过集成测试推进阶段。3D 和 2D 沿用库存快照，出库页可读取发运状态。测试结果和范围见 [Day 10 验收报告](reports/day-10-acceptance.md)。
+当前进度为 Day 11。盘点页支持单货位冻结、录入实数、管理员审批及差异过账。冻结货位从出库推荐与分配中排除。已有运输阶段继续由内部服务与集成测试推进。测试结果和范围见 [Day 11 验收报告](reports/day-11-acceptance.md)。
 
 ## 开发
 
@@ -57,6 +57,8 @@ Day 9 出库集成沿用上述写测试库，API 使用 13005，每例独立建�
 
 Day 10 在同一写测试库直接调用 Nest 内部过账服务，每例独立建仓。目标容量由 READY、IN_TRANSIT 任务占用。暂存保留订单预占，发运才扣减仓内现存。重启对账增加在途归属、阶段预占和暂存容量检查。领域约束见 [ADR 0007](docs/adr/0007-transport-ledger.md)。
 
+Day 11 使用同一写测试库和临时 API 13006 验证盘点。侧栏“盘点与审批”支持当前布局中的储位与出库暂存位。管理员和操作员可开盘和录数，管理员批准或拒绝。HTTP 使用仓库前缀下的 `GET/POST count-orders` 和 `POST count-orders/:orderId/submit|approve|reject`，写请求沿用 `key` 和 `reason`。冻结保护与过账约束见 [ADR 0008](docs/adr/0008-inventory-count.md)。
+
 入库入口为侧栏“仓库名 入库与质检”，API 前缀 `/spaces/:spaceId/warehouses/:warehouseId/inbound-orders`：GET 列表/选择项、POST 创建、POST `:orderId/receive`、POST `:orderId/inspect`。写请求带 `key` 和 `reason`，质检另带 `decision=PASS/REJECT`；只允许 admin/operator。日期是 UTC，页面选择的到期日从零点开始到期。收货可接收过期批次到 HOLD，但放行会拒绝。只支持全量操作，不是部分收货或机器人搬运。外部变化仍手动刷新，自己的操作成功后精确重读相关 Query。
 
 出库入口为侧栏“仓库名 出库与预占”，API 前缀 `/spaces/:spaceId/warehouses/:warehouseId/outbound-orders`：GET 列表/推荐、POST 创建、POST `:orderId/allocate`。写请求带 `key`、`reason`，创建另带 `skuId`、`batchId`、`quantity`。创建不占库存；分配重新验证当前布局 STORAGE、RELEASED、未过期来源，同批不足整单拒绝，不自动跨批。QC 即使已放行也不计储存区可分配量，不能直接使用仓库汇总 available 代替。分配成功只增加 reserved，后续位置转移由运输阶段过账。当前无盘点冻结模型；跨刷新未知创建结果先刷新核对，预占后到期不自动释放。
@@ -92,6 +94,8 @@ Day 3 只读入口：`GET /api/spaces/:spaceId/warehouses/:warehouseId/layout` �
 - [Day 9 日志](docs/devlog/day-09.md) · [验收报告](reports/day-09-acceptance.md)
 - [搬运账本与暂存容量](docs/adr/0007-transport-ledger.md)
 - [Day 10 日志](docs/devlog/day-10.md) · [验收报告](reports/day-10-acceptance.md)
+- [盘点冻结与审批](docs/adr/0008-inventory-count.md)
+- [Day 11 日志](docs/devlog/day-11.md) · [验收报告](reports/day-11-acceptance.md)
 - [项目总计划](doc/planning/WarehouseTwin-项目总计划.md)
 - [56 天每日计划](doc/planning/WarehouseTwin-56天每日计划.md)
 - [面试与 AI 协作](doc/planning/WarehouseTwin-面试与AI协作手册.md)
