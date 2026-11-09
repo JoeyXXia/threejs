@@ -87,3 +87,14 @@ npx --yes --package @playwright/cli playwright-cli -s=warehouse-day11 close
 ```
 
 脚本冻结账面 9 件的储位，验证推荐下降、出库分配拒绝，录入 12 件并批准，然后拒绝空暂存位盘点。执行后重载验证终态，截图位于 `output/playwright/day-11`。每次执行需使用新 QA 库。
+
+## Day 12 台账与对账
+
+从仓库根目录启动新的 `pnpm qa:browser`。使用新命名浏览器会话 `warehouse-day12` 打开 QA 地址并按快照登录管理员。依次运行下列脚本，结束时关闭该会话并向 QA 终端发送 `stop`。
+
+```powershell
+npx --yes --package @playwright/cli playwright-cli -s=warehouse-day12 run-code --filename scripts/browser-checks/day8-inbound.js
+npx --yes --package @playwright/cli playwright-cli -s=warehouse-day12 run-code --filename scripts/browser-checks/day12-wms.js
+```
+
+先完成收货及质检，再通过出库页面预占 3 件，最后核对台账筛选、过期批次预警、审计和只读对账。截图位于 `output/playwright/day-12`。

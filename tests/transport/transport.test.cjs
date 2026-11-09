@@ -1,7 +1,7 @@
 const { after, beforeEach, test } = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
-const { PrismaClient } = require('../../packages/database');
+const { PrismaClient, reconcileWarehouse } = require('../../packages/database');
 const { ids } = require('../../packages/database/seed.cjs');
 const { seedInventory } = require('../../packages/database/seed-inventory.cjs');
 const { reconcile, reconcileReservations } = require('../../packages/database/reconcile.cjs');
@@ -248,5 +248,23 @@ test('staging freeze and active transport exclude each other even when the locat
   await transport.take(scope, task.id, note);
   assert.deepEqual(counts(await stock(), stagingId), [0, 0]);
   await assert.rejects(openCount(), { status: 409 });
+  await assertReconciled();
+});
+
+test('scoped reconciliation detects missing physical transit cargo against the task phase', async () => {
+  const task = await create((await order(1)).allocations[0]);
+  await transport.take(scope, task.id, note);
+  const abortFixture = new Error('rollback isolated transit fixture');
+  await assert.rejects(db.$transaction(async (tx) => {
+    await tx.inventoryBalance.updateMany({
+      where: { ...warehouseScope, locationId: task.transitLocationId }, data: { onHand: 0, reserved: 0 },
+    });
+    const report = await reconcileWarehouse(tx, warehouseScope);
+    assert.equal(report.consistent, false);
+    assert.equal(report.mismatches[0].locationId, task.transitLocationId);
+    assert.ok(report.reservationMismatches.some((row) =>
+      row.kind === 'TRANSIT' && row.id === task.transitLocationId && row.actual === '0' && row.expected === '1'));
+    throw abortFixture;
+  }, { isolationLevel: 'RepeatableRead' }), (error) => error === abortFixture);
   await assertReconciled();
 });

@@ -1,1 +1,1 @@
-module.exports = require('@prisma/client');
+module.exports = { ...require('@prisma/client'), reconcileWarehouse: require('./reconcile.cjs').reconcileWarehouse };

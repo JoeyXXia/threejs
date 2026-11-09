@@ -7,6 +7,42 @@ const kind = z.enum(['INBOUND', 'QC', 'STORAGE', 'PICKING', 'OUTBOUND', 'CHARGIN
 const rect = { gridX: quantity, gridZ: quantity, sizeX: z.number().int().positive(), sizeZ: z.number().int().positive() };
 const totals = { onHand: quantity, reserved: quantity, available: quantity };
 
+export const movementKindSchema = z.enum(['OPENING', 'RECEIPT', 'TRANSFER', 'DISPATCH', 'COUNT_ADJUSTMENT']);
+const wmsScope = { spaceId: id, warehouseId: id, asOf: z.string().datetime() };
+const wmsBatch = z.object({ id, code: z.string(), skuCode: z.string(), expiresAt: z.string().datetime().nullable() });
+const wmsEndpoint = z.object({ code: z.string(), quality: z.enum(['HOLD', 'RELEASED']) }).nullable();
+export const wmsSchema = z.object({
+  ...wmsScope,
+  batches: z.array(wmsBatch),
+  batch: wmsBatch.extend({
+    producedAt: z.string().datetime().nullable(),
+    balances: z.array(z.object({
+      id, locationCode: z.string(), quality: z.enum(['HOLD', 'RELEASED']), onHand: quantity, reserved: quantity,
+    })),
+  }).nullable(),
+  warnings: z.array(z.object({
+    batch: wmsBatch, type: z.enum(['EXPIRED', 'EXPIRING', 'HOLD']), quantity,
+  })),
+  movements: z.array(z.object({
+    id, kind: movementKindSchema, batch: wmsBatch, source: wmsEndpoint, destination: wmsEndpoint,
+    quantity, reason: z.string(), reference: z.string(), createdAt: z.string().datetime(),
+  })),
+  audits: z.array(z.object({
+    id, action: z.string(), actor: z.string(), reason: z.string(), correlationId: z.string().nullable(), createdAt: z.string().datetime(),
+  })),
+  movementBefore: id.nullable(),
+  auditBefore: id.nullable(),
+});
+const difference = { actual: z.string(), expected: z.string() };
+export const wmsReconciliationSchema = z.object({
+  ...wmsScope,
+  consistent: z.boolean(),
+  mismatches: z.array(z.object({ locationId: id, skuId: id, batchId: id, quality: z.string(), ...difference })),
+  reservationMismatches: z.array(z.object({ kind: z.string(), id, ...difference })),
+});
+export type WmsResponse = z.infer<typeof wmsSchema>;
+export type WmsReconciliation = z.infer<typeof wmsReconciliationSchema>;
+
 export const layoutSchema = z.object({
   spaceId: id, warehouseId: id,
   layoutVersion: z.object({ id, version: z.number().int().positive(), width: z.number().int().positive(), depth: z.number().int().positive(),

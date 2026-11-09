@@ -13,9 +13,10 @@ import { OutboundService } from './outbound/outbound.service';
 import { TransportService } from './transport/transport.service';
 import { CountController } from './count/count.controller';
 import { CountService } from './count/count.service';
+import { WmsController } from './wms.controller';
 
 @Module({
-  controllers: [HealthController, AuthController, WarehouseController, InventoryController, InboundController, OutboundController, CountController],
+  controllers: [HealthController, AuthController, WarehouseController, InventoryController, InboundController, OutboundController, CountController, WmsController],
   providers: [DatabaseService, AuthService, AuthGuard, InboundService, OutboundService, TransportService, CountService],
 })
 export class AppModule {}

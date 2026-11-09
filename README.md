@@ -2,7 +2,7 @@
 
 WMS 业务驱动的智能仓库数字孪生演示系统。样本为合成数据，库存与流水由 PostgreSQL 持久化，设备为软件模拟。
 
-当前进度为 Day 11。盘点页支持单货位冻结、录入实数、管理员审批及差异过账。冻结货位从出库推荐与分配中排除。已有运输阶段继续由内部服务与集成测试推进。测试结果和范围见 [Day 11 验收报告](reports/day-11-acceptance.md)。
+当前进度为 Day 12。仓库台账提供批次余额、流水筛选、业务审计、库存预警和只读对账。已有入库、质检、出库预占及盘点继续使用各自的业务页面。测试结果和范围见 [Day 12 验收报告](reports/day-12-acceptance.md)。
 
 ## 开发
 
@@ -59,6 +59,8 @@ Day 10 在同一写测试库直接调用 Nest 内部过账服务，每例独立�
 
 Day 11 使用同一写测试库和临时 API 13006 验证盘点。侧栏“盘点与审批”支持当前布局中的储位与出库暂存位。管理员和操作员可开盘和录数，管理员批准或拒绝。HTTP 使用仓库前缀下的 `GET/POST count-orders` 和 `POST count-orders/:orderId/submit|approve|reject`，写请求沿用 `key` 和 `reason`。冻结保护与过账约束见 [ADR 0008](docs/adr/0008-inventory-count.md)。
 
+Day 12 使用同一写测试库和临时 API 13007 验证台账。仓库管理员和操作员可从侧栏打开“仓库台账”。仓库前缀下的 `GET wms` 支持流水类型、批次和各自的流水及审计游标，每页 25 条。`GET wms/reconcile` 只读取当前仓库并返回差异。台账的过期、7 天内到期与质检隔离预警使用该请求的同一时间点。
+
 入库入口为侧栏“仓库名 入库与质检”，API 前缀 `/spaces/:spaceId/warehouses/:warehouseId/inbound-orders`：GET 列表/选择项、POST 创建、POST `:orderId/receive`、POST `:orderId/inspect`。写请求带 `key` 和 `reason`，质检另带 `decision=PASS/REJECT`；只允许 admin/operator。日期是 UTC，页面选择的到期日从零点开始到期。收货可接收过期批次到 HOLD，但放行会拒绝。只支持全量操作，不是部分收货或机器人搬运。外部变化仍手动刷新，自己的操作成功后精确重读相关 Query。
 
 出库入口为侧栏“仓库名 出库与预占”，API 前缀 `/spaces/:spaceId/warehouses/:warehouseId/outbound-orders`：GET 列表/推荐、POST 创建、POST `:orderId/allocate`。写请求带 `key`、`reason`，创建另带 `skuId`、`batchId`、`quantity`。创建不占库存；分配重新验证当前布局 STORAGE、RELEASED、未过期来源，同批不足整单拒绝，不自动跨批。QC 即使已放行也不计储存区可分配量，不能直接使用仓库汇总 available 代替。分配成功只增加 reserved，后续位置转移由运输阶段过账。当前无盘点冻结模型；跨刷新未知创建结果先刷新核对，预占后到期不自动释放。
@@ -67,7 +69,7 @@ Day 11 使用同一写测试库和临时 API 13006 验证盘点。侧栏“盘�
 
 Day 3 只读入口：`GET /api/spaces/:spaceId/warehouses/:warehouseId/layout` 与同前缀 `/inventory`（直接 API 端口不带 `/api`）。需要登录 Cookie，viewer 可读，跨仓返回 404。返回布局版本、货位/服务点、货架阻挡和真实批次余额；空位显式返回 0，待检或到期库存不计 available。两个请求组合时应核对 layoutId/version 一致。
 
-每仓 seed 当前建立 17 个货位、2 SKU、2 批次与 11 条期初余额/流水，现存 62 件。数据来自[合成布局说明](data/layouts/README.md)，通过事务写入 DB，不在前端写死库存。`pnpm reconcile` CLI 用完整流水重算 onHand，含在途和发运，有差异以非零退出。预占、订单、在途归属和容量对账由集成入口调用。已有本地数据库先执行 `pnpm db:generate`、`pnpm db:migrate`、`pnpm seed` 再启动。
+每仓 seed 当前建立 17 个货位、2 SKU、2 批次与 11 条期初余额/流水，现存 62 件。数据来自[合成布局说明](data/layouts/README.md)。`pnpm reconcile` CLI 在同一只读快照中用流水重算现存，并核对预占、订单、在途归属和暂存容量。任一组有差异以非零退出。已有本地数据库先执行 `pnpm db:generate`、`pnpm db:migrate`、`pnpm seed` 再启动。
 
 所有 HTTP 写请求（包括登录/退出）要求 `X-Requested-With: WarehouseTwin`，浏览器 Origin 还须命中 `WEB_ORIGINS`。开发使用 HttpOnly / SameSite=Strict Cookie；生产自动 Secure，需 HTTPS。登录尝试限制为单进程/IP 每分钟 10 次，不依赖 Redis。
 
@@ -96,6 +98,7 @@ Day 3 只读入口：`GET /api/spaces/:spaceId/warehouses/:warehouseId/layout` �
 - [Day 10 日志](docs/devlog/day-10.md) · [验收报告](reports/day-10-acceptance.md)
 - [盘点冻结与审批](docs/adr/0008-inventory-count.md)
 - [Day 11 日志](docs/devlog/day-11.md) · [验收报告](reports/day-11-acceptance.md)
+- [Day 12 日志](docs/devlog/day-12.md) · [验收报告](reports/day-12-acceptance.md)
 - [项目总计划](doc/planning/WarehouseTwin-项目总计划.md)
 - [56 天每日计划](doc/planning/WarehouseTwin-56天每日计划.md)
 - [面试与 AI 协作](doc/planning/WarehouseTwin-面试与AI协作手册.md)
