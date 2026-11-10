@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { createOutboundSchema } from '@warehouse-twin/contracts';
 import { ApiError } from '../api';
-import { warehouseKey } from '../warehouse/data';
+import { refreshWarehouseViews } from '../warehouse/sync';
 import { commandAttempts, loadOutbound, outboundKey, outboundPath, sendOutbound } from './data';
 
 type Props = { userId: string; spaceId: string; warehouseId: string; name: string; onUnauthorized: () => void };
@@ -26,7 +26,7 @@ export function OutboundView({ userId, spaceId, warehouseId, name, onUnauthorize
       const result = await sendOutbound(path, { ...payload, key: requestKey }, spaceId, warehouseId, current.controller.signal);
       if (current.active) {
         attempts.current.completed();
-        await Promise.all([client.invalidateQueries({ queryKey: key, exact: true }), client.invalidateQueries({ queryKey: warehouseKey(userId, spaceId, warehouseId), exact: true })]);
+        await refreshWarehouseViews(client, userId, spaceId, warehouseId, key);
       }
       return { result, active: current.active };
     },

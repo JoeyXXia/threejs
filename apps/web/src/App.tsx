@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { Link, Navigate, NavLink, Route, Routes, useParams } from 'react-router-dom';
+import { Link, Navigate, NavLink, Route, Routes, useLocation, useParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { ApiError, api } from './api';
 import { WarehouseView } from './warehouse/WarehouseView';
@@ -29,13 +29,21 @@ function WarehouseRoute({ session, onUnauthorized, page = 'scene' }: {
   session: Session; onUnauthorized: () => void; page?: 'scene' | 'inbound' | 'outbound' | 'count' | 'wms';
 }) {
   const { spaceId, warehouseId } = useParams();
+  const { search } = useLocation();
   const warehouse = session.warehouses.find((entry) => entry.id === warehouseId && entry.spaceId === spaceId);
   if (!warehouse) return <section role="alert" className="error-state"><h1>仓库不可访问</h1><p>当前身份没有该仓库的访问权限。</p><Link to="/account">查看授权仓库</Link></section>;
   if (page === 'wms' && warehouse.role === 'VIEWER') return <section role="alert" className="error-state"><h1>仓库台账限管理员与操作员</h1>
     <Link to={warehousePath(warehouse)}>返回仓库场景</Link></section>;
-  const View = { scene: WarehouseView, inbound: InboundView, outbound: OutboundView, count: CountView, wms: WmsView }[page];
-  return <View key={`${session.user.id}:${warehouse.spaceId}:${warehouse.id}`} userId={session.user.id}
-    spaceId={warehouse.spaceId} warehouseId={warehouse.id} name={warehouse.name} onUnauthorized={onUnauthorized} />;
+  const props = { userId: session.user.id, spaceId: warehouse.spaceId, warehouseId: warehouse.id, name: warehouse.name, onUnauthorized };
+  const key = `${session.user.id}:${warehouse.spaceId}:${warehouse.id}`;
+  if (page === 'scene') {
+    const params = new URLSearchParams(search);
+    const warning = params.get('warning');
+    return <WarehouseView key={key + search} {...props} initialBatchId={params.get('batch') ?? ''}
+      warning={warning === 'HOLD' || warning === 'EXPIRED' || warning === 'EXPIRING' ? warning : null} />;
+  }
+  const View = { inbound: InboundView, outbound: OutboundView, count: CountView, wms: WmsView }[page];
+  return <View key={key} {...props} />;
 }
 
 export function App() {
@@ -109,7 +117,7 @@ export function App() {
   }
 
   return <main className={session ? 'app-shell' : 'login-shell'}>
-    <header><Link to="/" className="brand">WT / WarehouseTwin</Link><span>DAY 12 · 台账与对账</span></header>
+    <header><Link to="/" className="brand">WT / WarehouseTwin</Link><span>DAY 13 · 库存与场景联动</span></header>
     {!session && <><p className="eyebrow">仓储业务 × 空间可视化</p>
       <h1>每一个位置，<br />都连接后端业务数据。</h1>
       <p className="intro">登录后读取仓库布局和批次库存，生成参数化 3D 场景。设备为软件模拟。</p></>}

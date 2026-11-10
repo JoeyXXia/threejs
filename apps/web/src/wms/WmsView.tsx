@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { wmsReconciliationSchema, wmsSchema } from '@warehouse-twin/contracts';
 import { ApiError, api } from '../api';
+import { reconciliationKey, wmsKey } from '../warehouse/sync';
 
 type Props = { userId: string; spaceId: string; warehouseId: string; name: string; onUnauthorized: () => void };
 const movementLabels = {
@@ -24,7 +25,7 @@ export function WmsView({ userId, spaceId, warehouseId, name, onUnauthorized }: 
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries({ kind, batchId, movementBefore, auditBefore })) if (value) search.set(key, value);
   const query = useQuery({
-    queryKey: ['wms', userId, spaceId, warehouseId, search.toString()], gcTime: 0, retry: false,
+    queryKey: [...wmsKey(userId, spaceId, warehouseId), search.toString()], gcTime: 0, retry: false,
     queryFn: async ({ signal }) => {
       const value = wmsSchema.parse(await api(`${base}/wms?${search}`, 'GET', undefined, signal));
       if ((value.batch?.id ?? '') !== batchId) throw new Error('批次详情响应不一致');
@@ -32,7 +33,7 @@ export function WmsView({ userId, spaceId, warehouseId, name, onUnauthorized }: 
     },
   });
   const reconciliation = useQuery({
-    queryKey: ['wms-reconciliation', userId, spaceId, warehouseId], enabled: false, gcTime: 0, retry: false,
+    queryKey: reconciliationKey(userId, spaceId, warehouseId), enabled: false, gcTime: 0, retry: false,
     queryFn: async ({ signal }) => scopeCheck(wmsReconciliationSchema.parse(
       await api(`${base}/wms/reconcile`, 'GET', undefined, signal),
     ), spaceId, warehouseId),
@@ -56,7 +57,8 @@ export function WmsView({ userId, spaceId, warehouseId, name, onUnauthorized }: 
         <p className="view-note">仅统计有库存的批次。同一批次可同时出现隔离和到期预警。</p>
         {data.warnings.length === 0 ? <p>暂无预警。</p> : <ul>{data.warnings.map((warning) => (
           <li key={`${warning.batch.id}:${warning.type}`}>
-            {warning.batch.skuCode} / {warning.batch.code} · {warningLabels[warning.type]} · {warning.quantity} 件
+            {warning.batch.skuCode} / {warning.batch.code} · {warningLabels[warning.type]} · {warning.quantity} 件{' '}
+            <Link to={`${warehouse}?${new URLSearchParams({ batch: warning.batch.id, warning: warning.type })}`}>在场景定位</Link>
           </li>
         ))}</ul>}
       </article>

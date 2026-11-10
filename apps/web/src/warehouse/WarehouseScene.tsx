@@ -4,8 +4,8 @@ import { Grid } from '@react-three/drei';
 import type { WarehouseSnapshot } from '@warehouse-twin/contracts';
 import { cellCenter, rectangle } from './coordinates';
 import { zoneAppearance } from './zone-palette';
-import { inventoryAppearance, locationViews } from './inventory-view';
-import type { ZoneFilter } from './inventory-view';
+import { inventoryAppearance } from './inventory-view';
+import type { LocationView, ZoneFilter } from './inventory-view';
 import type { CameraMode } from './scene-store';
 import { CameraRig } from './CameraRig';
 
@@ -19,17 +19,16 @@ function ContextWatch({ onLost }: { onLost: () => void }) {
   return null;
 }
 
-type Props = { snapshot: WarehouseSnapshot; showZones: boolean; showServiceCells: boolean; selectedLocationId: string | null;
+type Props = { snapshot: WarehouseSnapshot; views: LocationView[]; showZones: boolean; showServiceCells: boolean; selectedLocationId: string | null;
   zoneFilter: ZoneFilter; cameraMode: CameraMode; cameraRequest: { locationId: string | null; sequence: number }; onSelect: (id: string | null) => void };
 
-export function WarehouseScene({ snapshot, showZones, showServiceCells, selectedLocationId, zoneFilter, cameraMode, cameraRequest, onSelect }: Props) {
+export function WarehouseScene({ snapshot, views, showZones, showServiceCells, selectedLocationId, zoneFilter, cameraMode, cameraRequest, onSelect }: Props) {
   const [lost, setLost] = useState(false);
   const { layout } = snapshot;
   const grid = layout.layoutVersion;
   const floor = rectangle(grid, 0, 0, grid.width, grid.depth);
   const [cx, , cz] = floor.position;
   const size = Math.max(floor.width, floor.depth);
-  const views = locationViews(snapshot, zoneFilter);
   const services = [...new Map(views.map(({ location }) => [`${location.serviceCell.x},${location.serviceCell.z}`, location.serviceCell])).values()];
   if (lost) return <p role="alert" className="scene-fallback">WebGL 上下文已丢失，请重新载入场景。</p>;
   return <Canvas key={grid.id} shadows="percentage" dpr={[1, 1.5]} frameloop="demand"

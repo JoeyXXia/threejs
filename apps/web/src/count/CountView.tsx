@@ -6,8 +6,7 @@ import { countListSchema, countOrderSchema } from '@warehouse-twin/contracts';
 import type { CountOrderResponse } from '@warehouse-twin/contracts';
 import { ApiError, api } from '../api';
 import { commandAttempts } from '../inbound/data';
-import { outboundKey } from '../outbound/data';
-import { warehouseKey } from '../warehouse/data';
+import { refreshWarehouseViews } from '../warehouse/sync';
 
 type Props = { userId: string; spaceId: string; warehouseId: string; name: string; onUnauthorized: () => void };
 const statusNames = { OPEN: '待录数', SUBMITTED: '待审批', APPROVED: '已批准', REJECTED: '已拒绝' };
@@ -49,11 +48,7 @@ export function CountView({ userId, spaceId, warehouseId, name, onUnauthorized }
       if (result.spaceId !== spaceId || result.warehouseId !== warehouseId) throw new Error('盘点操作响应归属不一致');
       if (current.active) {
         attempts.current.completed();
-        await Promise.all([
-          client.invalidateQueries({ queryKey: key, exact: true }),
-          client.invalidateQueries({ queryKey: warehouseKey(userId, spaceId, warehouseId), exact: true }),
-          client.invalidateQueries({ queryKey: outboundKey(userId, spaceId, warehouseId), exact: true }),
-        ]);
+        await refreshWarehouseViews(client, userId, spaceId, warehouseId, key, true);
       }
       return { result, current };
     },

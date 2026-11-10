@@ -98,3 +98,13 @@ npx --yes --package @playwright/cli playwright-cli -s=warehouse-day12 run-code -
 ```
 
 先完成收货及质检，再通过出库页面预占 3 件，最后核对台账筛选、过期批次预警、审计和只读对账。截图位于 `output/playwright/day-12`。
+
+## Day 13 库存与场景联动
+
+从仓库根目录启动新的 `pnpm qa:browser`，以普通 seed 和独立会话 `warehouse-day13` 登录管理员，进入 A 仓场景，再运行以下命令。
+
+```powershell
+npx --yes --package @playwright/cli playwright-cli -s=warehouse-day13 run-code --filename scripts/browser-checks/day13-scene.js
+```
+
+脚本收货 3 件，通过预警打开对应批次并对照 3D、2D 和详情。质检放行后再次检查同批次。最后拦截 A 仓请求后切到 B 仓，并用 503 验证错误恢复。截图位于 `output/playwright/day-13`。结束后关闭该浏览器会话并向 QA 终端发送 `stop`。

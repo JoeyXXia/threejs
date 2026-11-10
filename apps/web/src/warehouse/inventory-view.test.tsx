@@ -1,7 +1,7 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { expect, it } from 'vitest';
-import { locationViews, findLocations } from './inventory-view';
+import { locationViews, findLocations, warningLocation } from './inventory-view';
 import { InventoryDetails } from './InventoryDetails';
 import { InventoryTable } from './InventoryTable';
 import { fixtureId, fixtureSnapshot } from './test-fixtures';
@@ -75,4 +75,33 @@ it('filtering creates a display view without mutating geometry, obstacles or bal
   expect(locationViews(snapshot, 'QC')).toEqual([]);
   expect(locationViews(snapshot, 'STORAGE')).toHaveLength(2);
   expect(snapshot).toEqual(original);
+});
+
+it('uses only the selected batch for color, quantities and details in a mixed location', () => {
+  const snapshot = fixtureSnapshot();
+  const released = snapshot.inventory.balances[0]!;
+  const held = { ...released, id: fixtureId(15), quality: 'HOLD' as const, onHand: 2, available: 0,
+    batch: { ...released.batch, id: fixtureId(16), code: 'HELD' } };
+  snapshot.inventory.balances.push(held);
+  snapshot.inventory.locationTotals[0]!.onHand = 7;
+  snapshot.inventory.summary = { onHand: 7, reserved: 0, available: 5, hold: 2 };
+  expect(locationViews(snapshot)[0]?.status).toBe('HOLD');
+  const views = locationViews(snapshot, 'STORAGE', released.batch.id);
+  expect(views).toHaveLength(1);
+  expect(views[0]).toMatchObject({ total: { onHand: 5, available: 5, capacity: 40 }, status: 'AVAILABLE', balances: [released] });
+  expect(locationViews(snapshot, 'QC', released.batch.id)).toEqual([]);
+  expect(snapshot.inventory.summary.onHand).toBe(7);
+});
+
+it('locates positive matching warning stock and skips zero balances and virtual transit', () => {
+  const snapshot = fixtureSnapshot();
+  const row = snapshot.inventory.balances[0]!;
+  row.batch.expiresAt = snapshot.inventory.asOf;
+  snapshot.inventory.balances.push({ ...row, id: fixtureId(15), locationId: fixtureId(30),
+    onHand: 2, reserved: 2, available: 0, transit: true });
+  expect(warningLocation(snapshot, row.batch.id, 'EXPIRED')?.id).toBe(row.locationId);
+  expect(warningLocation(snapshot, row.batch.id, 'EXPIRING')).toBeUndefined();
+  expect(warningLocation(snapshot, row.batch.id, 'HOLD')).toBeUndefined();
+  row.onHand = 0;
+  expect(warningLocation(snapshot, row.batch.id, 'EXPIRED')).toBeUndefined();
 });
