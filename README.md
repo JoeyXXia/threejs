@@ -2,7 +2,7 @@
 
 WMS 业务驱动的智能仓库数字孪生演示系统。样本为合成数据，库存与流水由 PostgreSQL 持久化，设备为软件模拟。
 
-当前进度为 Day 13。3D、2D 与货位详情使用同一份库存快照，支持批次与区域组合筛选，并可从台账预警定位实体货位。业务操作提交后按仓库范围刷新相关页面。测试结果和范围见 [Day 13 验收报告](reports/day-13-acceptance.md)。
+当前阶段为 Day 14 的 `v0.2-wms`。收货、质检、预占、盘点和台账已接入真实 PostgreSQL。3D、2D 与货位详情使用同一库存快照。阶段功能、演示和验收范围见 [v0.2-wms 发布说明](docs/releases/v0.2-wms.md)。
 
 ## 开发
 
@@ -100,6 +100,7 @@ Day 3 只读入口：`GET /api/spaces/:spaceId/warehouses/:warehouseId/layout` �
 - [Day 11 日志](docs/devlog/day-11.md) · [验收报告](reports/day-11-acceptance.md)
 - [Day 12 日志](docs/devlog/day-12.md) · [验收报告](reports/day-12-acceptance.md)
 - [Day 13 日志](docs/devlog/day-13.md) · [验收报告](reports/day-13-acceptance.md)
+- [Day 14 日志](docs/devlog/day-14.md) · [验收报告](reports/day-14-acceptance.md) · [WMS 录像](reports/day-14-demo.webm)
 - [项目总计划](doc/planning/WarehouseTwin-项目总计划.md)
 - [56 天每日计划](doc/planning/WarehouseTwin-56天每日计划.md)
 - [面试与 AI 协作](doc/planning/WarehouseTwin-面试与AI协作手册.md)

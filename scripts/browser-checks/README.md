@@ -108,3 +108,15 @@ npx --yes --package @playwright/cli playwright-cli -s=warehouse-day13 run-code -
 ```
 
 脚本收货 3 件，通过预警打开对应批次并对照 3D、2D 和详情。质检放行后再次检查同批次。最后拦截 A 仓请求后切到 B 仓，并用 503 验证错误恢复。截图位于 `output/playwright/day-13`。结束后关闭该浏览器会话并向 QA 终端发送 `stop`。
+
+## Day 14 WMS 录像
+
+启动新 `pnpm qa:browser`，在 `output/playwright/day-14` 打开独立 Chrome 会话 `warehouse-day14`。登录测试管理员并进入 A 仓场景后，从该目录运行下列命令。
+
+```powershell
+npx --yes --package @playwright/cli playwright-cli -s=warehouse-day14 video-start day-14-demo.webm --size=1440x1100 --fps=25
+npx --yes --package @playwright/cli playwright-cli -s=warehouse-day14 run-code --filename ../../../scripts/browser-checks/day14-demo.js
+npx --yes --package @playwright/cli playwright-cli -s=warehouse-day14 video-stop
+```
+
+确认录制启动、操作回调通过且文件可解码。录像暂停仅供观看，断言使用实际操作响应和 UI 就绪条件。结束后关闭该会话并向 QA 终端发送 `stop`。
