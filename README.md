@@ -2,7 +2,7 @@
 
 WMS 业务驱动的智能仓库数字孪生演示系统。样本为合成数据，库存与流水由 PostgreSQL 持久化，设备为软件模拟。
 
-当前进度为 Day 15 导航网格与货位服务点。场景中的“导航调试”可查看完整布局的障碍、服务点和四邻接连通分区，支持在 2D 模式使用。实测与边界见 [Day 15 验收报告](reports/day-15-acceptance.md)。收货、质检、预占、盘点和台账已接入真实 PostgreSQL。3D、2D 与货位详情使用同一库存快照。Day 14 阶段功能与演示见 [v0.2-wms 发布说明](docs/releases/v0.2-wms.md)。
+当前进度为 Day 16 有界 A* 与 BFS 对照。纯函数 `findPath` 提供四邻接路径、失败原因、布局版本与搜索指标，验证见 [Day 16 验收报告](reports/day-16-acceptance.md)。场景中的“导航调试”可查看完整布局的障碍、服务点和四邻接连通分区，支持在 2D 模式使用，见 [Day 15 验收报告](reports/day-15-acceptance.md)。收货、质检、预占、盘点和台账已接入真实 PostgreSQL。3D、2D 与货位详情使用同一库存快照。Day 14 阶段功能与演示见 [v0.2-wms 发布说明](docs/releases/v0.2-wms.md)。
 
 ## 开发
 
