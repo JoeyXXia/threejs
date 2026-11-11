@@ -91,3 +91,5 @@ td button, th button { padding: 5px 10px; font-size: 12px; }
 .inbound-order table { width: 100%; table-layout: fixed; border-collapse: collapse; margin-top: 16px; }
 .inbound-order th, .inbound-order td { padding: 8px; text-align: left; border-bottom: 1px solid #c5d2cc; overflow-wrap: anywhere; }
 .wms-workspace th, .wms-workspace td { white-space: normal; }
+.navigation-debug { margin: 16px 0; padding: 16px; background: #fff; border: 1px solid #c5d2cc; border-radius: 8px; }
+.navigation-debug canvas { display: block; width: min(100%, 620px); height: auto; max-height: 480px; object-fit: contain; object-position: left; image-rendering: pixelated; }

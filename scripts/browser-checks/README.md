@@ -120,3 +120,18 @@ npx --yes --package @playwright/cli playwright-cli -s=warehouse-day14 video-stop
 ```
 
 确认录制启动、操作回调通过且文件可解码。录像暂停仅供观看，断言使用实际操作响应和 UI 就绪条件。结束后关闭该会话并向 QA 终端发送 `stop`。
+
+## Day 15 导航网格
+
+从仓库根目录启动新 `pnpm qa:browser`，以普通 seed 和独立会话 `warehouse-day15` 打开 QA 地址，按当前快照登录管理员并进入 A 仓场景。
+
+```powershell
+New-Item -ItemType Directory -Force output/playwright/day-15
+npx --yes --package @playwright/cli playwright-cli -s=warehouse-day15 open http://127.0.0.1:15174 --browser chrome
+# 登录后执行
+npx --yes --package @playwright/cli playwright-cli -s=warehouse-day15 run-code --filename scripts/browser-checks/day15-navigation.js
+npx --yes --package @playwright/cli playwright-cli -s=warehouse-day15 close
+# 最后向 QA 终端发送 stop
+```
+
+脚本逐格核对架体与服务点颜色，验证切换 2D 和 QC 筛选后图像保持一致，通过响应拦截制造断图，再恢复真实布局。返回可走格数、货位数、独立服务点数和分区序列，截图写入 `output/playwright/day-15`。运行结束后移除响应拦截。

@@ -6,7 +6,14 @@ describe('grid/world coordinate contract', () => {
   const grid = fixtureSnapshot().layout.layoutVersion;
   it('maps integer cells to their centers with Y up', () => { expect(cellCenter(grid, 2, 3)).toEqual([2.5, 0, 3.5]); });
   it('handles shifted origins and non-unit cells', () => {
-    expect(cellCenter({ ...grid, cellSize: 2, origin: { x: -10, z: 7 } }, 2, 3)).toEqual([-5, 0, 14]);
+    const shifted = { ...grid, cellSize: 2, origin: { x: -10, z: 7 } };
+    expect(cellCenter(shifted, 2, 3)).toEqual([-5, 0, 14]);
+    for (let z = 0; z < shifted.depth; z++) for (let x = 0; x < shifted.width; x++) {
+      const [worldX, , worldZ] = cellCenter(shifted, x, z);
+      expect(worldToCell(shifted, worldX, worldZ)).toEqual({ x, z });
+    }
+    expect(worldToCell(shifted, -10, 7)).toEqual({ x: 0, z: 0 });
+    expect(worldToCell(shifted, 10, 7)).toBeNull();
   });
   it('round-trips every sample cell center', () => {
     for (let x = 0; x < grid.width; x++) for (let z = 0; z < grid.depth; z++) {

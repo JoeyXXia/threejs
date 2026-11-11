@@ -117,7 +117,7 @@ export function App() {
   }
 
   return <main className={session ? 'app-shell' : 'login-shell'}>
-    <header><Link to="/" className="brand">WT / WarehouseTwin</Link><span>DAY 13 · 库存与场景联动</span></header>
+    <header><Link to="/" className="brand">WT / WarehouseTwin</Link><span>DAY 15 · 导航网格与服务点</span></header>
     {!session && <><p className="eyebrow">仓储业务 × 空间可视化</p>
       <h1>每一个位置，<br />都连接后端业务数据。</h1>
       <p className="intro">登录后读取仓库布局和批次库存，生成参数化 3D 场景。设备为软件模拟。</p></>}

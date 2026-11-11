@@ -10,6 +10,7 @@ import { findLocations, inventoryAppearance, locationViews, warningLocation } fr
 import type { InventoryWarning, ZoneFilter } from './inventory-view';
 import { InventoryDetails } from './InventoryDetails';
 import { InventoryTable } from './InventoryTable';
+import { NavigationDebug } from './NavigationDebug';
 
 const WarehouseScene = lazy(() => import('./WarehouseScene').then((module) => ({ default: module.WarehouseScene })));
 
@@ -21,6 +22,7 @@ export function WarehouseView({ userId, spaceId, warehouseId, name, onUnauthoriz
   const [store] = useState(createSceneStore);
   const ui = useStore(store);
   const [sceneGeneration, setSceneGeneration] = useState(0);
+  const [showNavigation, setShowNavigation] = useState(false);
   const [search, setSearch] = useState('');
   const [searchMessage, setSearchMessage] = useState('');
   const [searchIds, setSearchIds] = useState<string[]>([]);
@@ -65,7 +67,9 @@ export function WarehouseView({ userId, spaceId, warehouseId, name, onUnauthoriz
           <div className="view-switch" aria-label="数据视图">
             <button aria-pressed={ui.viewMode === 'scene'} onClick={() => ui.setViewMode('scene')}>3D 场景</button>
             <button aria-pressed={ui.viewMode === 'list'} onClick={() => ui.setViewMode('list')}>2D 库存列表</button>
+            <button aria-pressed={showNavigation} onClick={() => setShowNavigation((value) => !value)}>导航调试</button>
           </div>
+          {showNavigation && <NavigationDebug layout={query.data.layout} />}
           <form className="location-search" onSubmit={(event) => {
             event.preventDefault();
             const visible = new Set(allViews.map((view) => view.location.id));
