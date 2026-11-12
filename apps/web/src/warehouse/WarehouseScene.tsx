@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
 import { Grid } from '@react-three/drei';
-import type { WarehouseSnapshot } from '@warehouse-twin/contracts';
+import type { RobotSnapshot, WarehouseSnapshot } from '@warehouse-twin/contracts';
 import { cellCenter, rectangle } from './coordinates';
 import { zoneAppearance } from './zone-palette';
 import { inventoryAppearance } from './inventory-view';
 import type { LocationView, ZoneFilter } from './inventory-view';
 import type { CameraMode } from './scene-store';
 import { CameraRig } from './CameraRig';
+import { RobotModel } from './RobotModel';
 
 function ContextWatch({ onLost }: { onLost: () => void }) {
   const canvas = useThree((state) => state.gl.domElement);
@@ -19,10 +20,10 @@ function ContextWatch({ onLost }: { onLost: () => void }) {
   return null;
 }
 
-type Props = { snapshot: WarehouseSnapshot; views: LocationView[]; showZones: boolean; showServiceCells: boolean; selectedLocationId: string | null;
+type Props = { snapshot: WarehouseSnapshot; robot?: RobotSnapshot | null; views: LocationView[]; showZones: boolean; showServiceCells: boolean; selectedLocationId: string | null;
   zoneFilter: ZoneFilter; cameraMode: CameraMode; cameraRequest: { locationId: string | null; sequence: number }; onSelect: (id: string | null) => void };
 
-export function WarehouseScene({ snapshot, views, showZones, showServiceCells, selectedLocationId, zoneFilter, cameraMode, cameraRequest, onSelect }: Props) {
+export function WarehouseScene({ snapshot, robot, views, showZones, showServiceCells, selectedLocationId, zoneFilter, cameraMode, cameraRequest, onSelect }: Props) {
   const [lost, setLost] = useState(false);
   const { layout } = snapshot;
   const grid = layout.layoutVersion;
@@ -85,5 +86,6 @@ export function WarehouseScene({ snapshot, views, showZones, showServiceCells, s
         </mesh>;
       })}
       <CameraRig layout={layout} mode={cameraMode} request={cameraRequest} />
+      {robot && robot.layoutId === grid.id && robot.layoutVersion === grid.version && <RobotModel key={robot.taskId} snapshot={robot} grid={grid} />}
     </Canvas>;
 }

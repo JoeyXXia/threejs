@@ -93,3 +93,9 @@ td button, th button { padding: 5px 10px; font-size: 12px; }
 .wms-workspace th, .wms-workspace td { white-space: normal; }
 .navigation-debug { margin: 16px 0; padding: 16px; background: #fff; border: 1px solid #c5d2cc; border-radius: 8px; }
 .navigation-debug canvas { display: block; width: min(100%, 620px); height: auto; max-height: 480px; object-fit: contain; object-position: left; image-rendering: pixelated; }
+/* Robot telemetry remains readable in narrow viewports; these controls never advance ticks. */
+.robot-panel { padding: 1rem; margin: 1rem 0; border: 1px solid #c7d5cf; border-radius: .5rem; background: #f8fbf9; }
+.robot-panel p { overflow-wrap: anywhere; }
+.robot-panel fieldset { display: flex; flex-wrap: wrap; gap: .75rem; align-items: end; border: 0; padding: 0; margin: 0; }
+.robot-panel label { display: flex; flex-direction: column; gap: .35rem; max-width: 100%; }
+.robot-panel select { max-width: 100%; }

@@ -117,7 +117,7 @@ export function App() {
   }
 
   return <main className={session ? 'app-shell' : 'login-shell'}>
-    <header><Link to="/" className="brand">WT / WarehouseTwin</Link><span>DAY 15 · 导航网格与服务点</span></header>
+    <header><Link to="/" className="brand">WT / WarehouseTwin</Link><span>DAY 18 · 单车任务与确认轨迹</span></header>
     {!session && <><p className="eyebrow">仓储业务 × 空间可视化</p>
       <h1>每一个位置，<br />都连接后端业务数据。</h1>
       <p className="intro">登录后读取仓库布局和批次库存，生成参数化 3D 场景。设备为软件模拟。</p></>}
@@ -172,6 +172,6 @@ export function App() {
         <Route path="*" element={<section className="error-state"><h1>页面不存在</h1><Link to="/">返回仓库</Link></section>} />
       </Routes></div>
     </>}
-    <footer>WarehouseTwin · WMS 数据驱动的仓库演示。设备为软件模拟；未实现机器人运行、任务或实时推送。</footer>
+    <footer>WarehouseTwin · WMS 数据驱动的仓库演示。设备为软件模拟；单车状态暂用轮询，尚无持久 runner 或实时推送。</footer>
   </main>;
 }
