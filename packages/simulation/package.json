@@ -1,0 +1,14 @@
+{
+  "name": "@warehouse-twin/simulation",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:unit": "vitest run --reporter=default --reporter=json --outputFile=../../reports/simulation-unit.json"
+  },
+  "devDependencies": { "vitest": "5.0.5" }
+}
