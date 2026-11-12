@@ -1,5 +1,9 @@
 # 浏览器验收（Playwright CLI）
 
+## Day 18 单车任务
+
+使用全新 `pnpm qa:browser`，从仓库根目录运行独立会话的 `day18-robot.js`。它通过已有命令 API 准备 1 件出库预占，在页面启动任务，验证刷新、浏览器有界阻塞、503 断流与恢复、库存守恒和只读权限。QA 终端输入 `expire` 后运行 `day18-session-expiry.js`，确认旧控件和场景清除。命令和实测结果见 [Day 18 报告](../../reports/day-18-acceptance.md)。回调要求普通 seed，不执行 reserve/layout-v2，也不在同一库重复创建样例后仍期待暂存位只有 1 件。结束仅关闭该测试会话并输入 stop。
+
 这些 `.js` 是 CLI `run-code --filename` 接受的单一 async 函数表达式，不是 `@playwright/test` spec。仅使用独立临时 QA DB / 浏览器，不读开发 `.env` 或个人浏览器。
 
 1. 先 `pnpm db:generate`、`pnpm build`。交互终端运行 `pnpm qa:browser`，等 `QA READY`。不要管道运行：stdin 结束会清理服务。
