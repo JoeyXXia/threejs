@@ -2,7 +2,7 @@
 
 WMS 业务驱动的智能仓库数字孪生演示系统。样本为合成数据，库存与流水由 PostgreSQL 持久化，设备为软件模拟。
 
-当前进度为 Day 16 有界 A* 与 BFS 对照。纯函数 `findPath` 提供四邻接路径、失败原因、布局版本与搜索指标，验证见 [Day 16 验收报告](reports/day-16-acceptance.md)。场景中的“导航调试”可查看完整布局的障碍、服务点和四邻接连通分区，支持在 2D 模式使用，见 [Day 15 验收报告](reports/day-15-acceptance.md)。收货、质检、预占、盘点和台账已接入真实 PostgreSQL。3D、2D 与货位详情使用同一库存快照。Day 14 阶段功能与演示见 [v0.2-wms 发布说明](docs/releases/v0.2-wms.md)。
+当前进度为 Day 17 纯 TypeScript 固定步长模拟器。`packages/simulation` 提供默认 250ms 步进、显式命令、seed 和状态摘要，无浏览器、数据库或定时器依赖；`pnpm demo:simulation` 可直接运行 Node 样例，验证与限制见 [Day 17 验收报告](reports/day-17-acceptance.md) 和 [时钟设计](docs/adr/0009-deterministic-simulation.md)。机器人场景显示和库存过账尚未接入模拟器。Day 16 的 `findPath` 已提取到同一共享包，提供四邻接路径、失败原因、布局版本与搜索指标，验证见 [Day 16 验收报告](reports/day-16-acceptance.md)。场景中的“导航调试”可查看完整布局的障碍、服务点和四邻接连通分区，支持在 2D 模式使用，见 [Day 15 验收报告](reports/day-15-acceptance.md)。收货、质检、预占、盘点和台账已接入真实 PostgreSQL。3D、2D 与货位详情使用同一库存快照。Day 14 阶段功能与演示见 [v0.2-wms 发布说明](docs/releases/v0.2-wms.md)。
 
 ## 开发
 
