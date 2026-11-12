@@ -15,7 +15,8 @@
     "@warehouse-twin/contracts": "workspace:*",
     "@warehouse-twin/database": "workspace:*",
     "reflect-metadata": "0.2.2",
-    "rxjs": "7.8.2"
+    "rxjs": "7.8.2",
+    "@warehouse-twin/simulation": "workspace:*"
   },
   "devDependencies": {
     "@types/express": "5.0.6",

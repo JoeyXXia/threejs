@@ -14,7 +14,7 @@ export class TransportService {
   constructor(@Inject(DatabaseService) private readonly db: DatabaseService) {}
 
   // Internal entry points. The caller supplies an authenticated operator, never a request body.
-  private command<T>(scope: Scope, reason: string, work: (tx: Tx, reason: string) => Promise<T>) {
+  private command<T>(scope: Scope, reason: string, work: (tx: Tx, reason: string) => Promise<T>, expectedLayoutId?: string) {
     const { spaceId, warehouseId, actorId: userId } = scope;
     for (const id of [spaceId, warehouseId, userId]) uuidInput(id);
     const normalizedReason = textInput(reason, 1, 200);
@@ -25,11 +25,15 @@ export class TransportService {
       if (!access) throw new NotFoundException('仓库不可访问');
       if (access.role === 'VIEWER') throw new ForbiddenException('只读账户不能过账');
       await tx.$queryRaw`SELECT id FROM "Warehouse" WHERE id=${warehouseId}::uuid FOR UPDATE`;
+      if (expectedLayoutId) {
+        const warehouse = await tx.warehouse.findUniqueOrThrow({ where: { id: warehouseId } });
+        if (warehouse.activeLayoutId !== expectedLayoutId) throw new ConflictException('布局已变化，停止机器人过账');
+      }
       return work(tx, normalizedReason);
     }, { timeout: 15000 });
   }
 
-  create(scope: Scope, allocationId: string, stagingLocationId: string, reason: string) {
+  create(scope: Scope, allocationId: string, stagingLocationId: string, reason: string, expectedLayoutId?: string) {
     uuidInput(allocationId);
     uuidInput(stagingLocationId);
     const { spaceId, warehouseId } = scope;
@@ -64,18 +68,18 @@ export class TransportService {
       });
       await this.audit(tx, scope, 'TRANSPORT_CREATED', id, note, {}, task);
       return task;
-    });
+    }, expectedLayoutId);
   }
 
-  take(scope: Scope, taskId: string, reason: string) {
-    return this.move(scope, taskId, 'take', reason);
+  take(scope: Scope, taskId: string, reason: string, expectedLayoutId?: string) {
+    return this.move(scope, taskId, 'take', reason, expectedLayoutId);
   }
 
-  drop(scope: Scope, taskId: string, reason: string) {
-    return this.move(scope, taskId, 'drop', reason);
+  drop(scope: Scope, taskId: string, reason: string, expectedLayoutId?: string) {
+    return this.move(scope, taskId, 'drop', reason, expectedLayoutId);
   }
 
-  private move(scope: Scope, taskId: string, stage: Stage, reason: string) {
+  private move(scope: Scope, taskId: string, stage: Stage, reason: string, expectedLayoutId?: string) {
     uuidInput(taskId);
     return this.command(scope, reason, async (tx, note) => {
       const task = await tx.transportTask.findFirst({
@@ -104,7 +108,7 @@ export class TransportService {
       await this.audit(tx, scope, taking ? 'TRANSPORT_TAKEN' : 'TRANSPORT_DROPPED', taskId, note,
         { phase: task.phase }, { phase: updated.phase, source, destination, quantity });
       return updated;
-    });
+    }, expectedLayoutId);
   }
 
   dispatch(scope: Scope, orderId: string, reason: string) {

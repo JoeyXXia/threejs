@@ -181,3 +181,23 @@ export function validateSnapshot(layout: LayoutResponse, inventory: InventoryRes
     || inventory.balances.some((row) => row.transit ? locations.has(row.locationId) : !locations.has(row.locationId))) throw new Error('Inventory location mismatch');
   return { layout, inventory };
 }
+
+const robotCell = z.object({ x: z.number().int().min(0).max(511), z: z.number().int().min(0).max(511) });
+export const robotSnapshotSchema = z.object({
+  taskId: id, allocationId: id, layoutId: id, layoutVersion: z.number().int().positive(),
+  phase: z.enum(['APPROACH', 'LOADING', 'TRANSPORT', 'UNLOADING', 'COMPLETED', 'ERROR']),
+  tick: quantity, logicalTimeMs: quantity, tickMs: z.literal(250),
+  from: robotCell, to: robotCell, direction: z.enum(['N', 'E', 'S', 'W']),
+  battery: z.number().int().min(0).max(10000), route: z.array(robotCell).min(1).max(65536),
+  carrying: z.boolean(), error: z.string().max(200).nullable(),
+}).superRefine((value, ctx) => {
+  if (Math.abs(value.from.x - value.to.x) + Math.abs(value.from.z - value.to.z) > 1
+    || value.logicalTimeMs !== value.tick * value.tickMs) ctx.addIssue({ code: 'custom', message: 'Invalid confirmed segment' });
+});
+export type RobotSnapshot = z.infer<typeof robotSnapshotSchema>;
+export const simulationResponseSchema = z.object({
+  spaceId: id, warehouseId: id, role: z.enum(['ADMIN', 'OPERATOR', 'VIEWER']), runtime: robotSnapshotSchema.nullable(),
+  allocations: z.array(z.object({ id, label: z.string(), quantity: z.number().int().positive() })),
+  staging: z.array(z.object({ id, code: z.string() })),
+});
+export type SimulationResponse = z.infer<typeof simulationResponseSchema>;

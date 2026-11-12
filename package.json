@@ -19,7 +19,7 @@
     "reconcile": "node scripts/database.mjs reconcile",
     "db:local": "node scripts/local-postgres.mjs",
     "setup:local": "node scripts/setup-local.mjs",
-    "test:integration": "pnpm --filter @warehouse-twin/contracts build && pnpm --filter @warehouse-twin/api build && node scripts/integration.mjs",
+    "test:integration": "pnpm --filter @warehouse-twin/contracts build && pnpm --filter @warehouse-twin/simulation build && pnpm --filter @warehouse-twin/api build && node scripts/integration.mjs",
     "test:unit": "pnpm --filter @warehouse-twin/contracts build && pnpm --filter @warehouse-twin/simulation build && pnpm --filter @warehouse-twin/simulation test:unit && pnpm --filter @warehouse-twin/web test:unit",
     "qa:browser": "pnpm --filter @warehouse-twin/contracts build && pnpm --filter @warehouse-twin/simulation build && pnpm --filter @warehouse-twin/api build && node scripts/day4-browser-environment.mjs",
     "demo:simulation": "pnpm --filter @warehouse-twin/simulation build && node scripts/day17-simulation-demo.mjs"

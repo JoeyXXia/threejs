@@ -14,9 +14,11 @@ import { TransportService } from './transport/transport.service';
 import { CountController } from './count/count.controller';
 import { CountService } from './count/count.service';
 import { WmsController } from './wms.controller';
+import { SimulationService } from './simulation/simulation.service';
+import { SimulationController } from './simulation/simulation.controller';
 
 @Module({
-  controllers: [HealthController, AuthController, WarehouseController, InventoryController, InboundController, OutboundController, CountController, WmsController],
-  providers: [DatabaseService, AuthService, AuthGuard, InboundService, OutboundService, TransportService, CountService],
+  controllers: [HealthController, AuthController, WarehouseController, InventoryController, InboundController, OutboundController, CountController, WmsController, SimulationController],
+  providers: [DatabaseService, AuthService, AuthGuard, InboundService, OutboundService, TransportService, CountService, SimulationService],
 })
 export class AppModule {}

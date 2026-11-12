@@ -48,7 +48,7 @@ try {
   await run(['seed.cjs'], `${root}/packages/database`, inboundEnv);
   // Use Node's normal module loader for direct imports of the Nest domain services.
   await run(['--test', '--test-reporter=spec', '--test-reporter-destination=stdout',
-    '--test-reporter=tap', '--test-reporter-destination=reports/integration-transport.tap', 'tests/transport/transport.test.cjs']);
+    '--test-reporter=tap', '--test-reporter-destination=reports/integration-transport.tap', 'tests/transport/transport.test.cjs', 'tests/transport/simulation.test.cjs']);
   await run(['node_modules/jest/bin/jest.js', '--config', 'tests/integration/jest.config.cjs', '--runInBand', '--json', '--outputFile', 'reports/integration-jest.json']);
   // Verify persisted rows after a real database restart, once all HTTP test processes have closed.
   await pg.stop(); await pg.start();
