@@ -1,5 +1,9 @@
 # 浏览器验收（Playwright CLI）
 
+## Day 19 持久状态与事件水位
+
+在全新 `pnpm qa:browser` 环境运行 `day19-runtime.js`。它通过既有出库命令准备 1 件预占，在页面启动单车，完成后刷新并核对页面/库存/事件水位、连续 seq 和最后事件中的 task/tick。等待真实 Canvas 和相机就绪后截图。真实后端进程重启及双客户端 fencing 由数据库集成测试覆盖，不用浏览器刷新冒充后端重启。命令、证据日期与限制见 [Day 19 报告](../../reports/day-19-acceptance.md)。结束关闭该测试会话并输入 stop。
+
 ## Day 18 单车任务
 
 使用全新 `pnpm qa:browser`，从仓库根目录运行独立会话的 `day18-robot.js`。它通过已有命令 API 准备 1 件出库预占，在页面启动任务，验证刷新、浏览器有界阻塞、503 断流与恢复、库存守恒和只读权限。QA 终端输入 `expire` 后运行 `day18-session-expiry.js`，确认旧控件和场景清除。命令和实测结果见 [Day 18 报告](../../reports/day-18-acceptance.md)。回调要求普通 seed，不执行 reserve/layout-v2，也不在同一库重复创建样例后仍期待暂存位只有 1 件。结束仅关闭该测试会话并输入 stop。
