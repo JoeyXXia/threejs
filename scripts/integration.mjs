@@ -13,6 +13,7 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const password = randomBytes(24).toString('hex');
 const databaseUrl = `postgresql://warehouse:${password}@127.0.0.1:15432/warehouse_twin_test`;
 const inboundDatabaseUrl = `postgresql://warehouse:${password}@127.0.0.1:15432/warehouse_twin_inbound_test`;
+const upgradeDatabaseUrl = `postgresql://warehouse:${password}@127.0.0.1:15432/warehouse_twin_upgrade_test`;
 const env = { ...process.env, DATABASE_URL: databaseUrl, TEST_DATABASE_URL: databaseUrl, INBOUND_TEST_DATABASE_URL: inboundDatabaseUrl,
   DEMO_PASSWORD: randomBytes(16).toString('hex'), NODE_ENV: 'test', SESSION_TTL_SECONDS: '3600', SESSION_SECURE: 'false',
   WEB_ORIGINS: 'http://127.0.0.1:5173,http://localhost:5173' };
@@ -46,6 +47,8 @@ try {
   const inboundEnv = { ...env, DATABASE_URL: inboundDatabaseUrl };
   await run(['node_modules/prisma/build/index.js', 'migrate', 'deploy'], `${root}/packages/database`, inboundEnv);
   await run(['seed.cjs'], `${root}/packages/database`, inboundEnv);
+  await pg.createDatabase('warehouse_twin_upgrade_test');
+  await run(['scripts/runtime-upgrade-check.mjs'], root, { ...env, UPGRADE_TEST_DATABASE_URL: upgradeDatabaseUrl });
   // Use Node's normal module loader for direct imports of the Nest domain services.
   await run(['--test', '--test-reporter=spec', '--test-reporter-destination=stdout',
     '--test-reporter=tap', '--test-reporter-destination=reports/integration-transport.tap', 'tests/transport/transport.test.cjs', 'tests/transport/simulation.test.cjs']);
@@ -53,12 +56,21 @@ try {
   // Verify persisted rows after a real database restart, once all HTTP test processes have closed.
   await pg.stop(); await pg.start();
   const results = [];
-  for (const datasourceUrl of [databaseUrl, inboundDatabaseUrl]) {
+  for (const datasourceUrl of [databaseUrl, inboundDatabaseUrl, upgradeDatabaseUrl]) {
   const db = new database.PrismaClient({ datasourceUrl });
   try {
     const evidence = await db.$transaction(async (tx) => {
       const mismatches = await ledger.reconcile(tx);
       const reservationMismatches = await ledger.reconcileReservations(tx);
+      const eventMismatches = await tx.$queryRaw`SELECT r."warehouseId", r.seq, count(e.seq)::integer AS count
+        FROM "WarehouseRuntime" r LEFT JOIN "WarehouseEvent" e ON e."warehouseId"=r."warehouseId"
+        GROUP BY r."warehouseId",r.seq HAVING count(e.seq)<>r.seq OR coalesce(max(e.seq),0)<>r.seq`;
+      const checkpoints = await tx.warehouseRuntime.findMany({ where: { checkpoint: { not: database.Prisma.DbNull } } });
+      const checkpointMismatches = [];
+      for (const row of checkpoints) {
+        const last = await tx.warehouseEvent.findFirst({ where: { warehouseId: row.warehouseId, kind: { in: ['SIM_STARTED', 'SIM_TICK', 'SIM_ERROR'] } }, orderBy: { seq: 'desc' } });
+        if (row.checkpoint.task.simulation.tick !== row.tick || !last || last.payload.tick !== row.tick) checkpointMismatches.push(row.warehouseId);
+      }
       const warehouses = await tx.warehouse.findMany({ include: { activeLayout: true }, orderBy: { id: 'asc' } });
       const samples = [];
       for (const warehouse of warehouses) {
@@ -71,7 +83,9 @@ try {
           movements: await tx.inventoryMovement.count({ where }), skus: await tx.sku.count({ where }), batches: await tx.batch.count({ where }),
           onHand: totals._sum.onHand, reserved: totals._sum.reserved });
       }
-      return { capturedAt: new Date().toISOString(), databaseRestarted: true, consistent: mismatches.length === 0 && reservationMismatches.length === 0, mismatches, reservationMismatches, warehouses: samples };
+      return { capturedAt: new Date().toISOString(), databaseRestarted: true,
+        consistent: mismatches.length === 0 && reservationMismatches.length === 0 && eventMismatches.length === 0 && checkpointMismatches.length === 0,
+        mismatches, reservationMismatches, eventMismatches, checkpointMismatches, persistedCheckpoints: checkpoints.length, warehouses: samples };
     }, { isolationLevel: 'RepeatableRead' });
     results.push({ database: new URL(datasourceUrl).pathname.slice(1), ...evidence });
     if (!evidence.consistent) throw new Error('Post-restart inventory reconciliation failed');

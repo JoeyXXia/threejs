@@ -125,7 +125,7 @@ export function WarehouseView({ userId, spaceId, warehouseId, name, onUnauthoriz
           <InventoryDetails view={selected} onClose={() => ui.selectLocation(null)} />
           <ul className="zone-legend" aria-label="区域图例">{Object.entries(zoneAppearance).map(([kind, value]) => <li key={kind}><i style={{ background: value.color }} />{value.name}</li>)}</ul>
           <p className="view-note">点选货位查看详情，拖动旋转，滚轮缩放。线框为空位；货位在货架内，地面圆环是服务点。无 WebGL 时可直接使用 2D 库存列表。</p>
-          <p className="view-note">画面由 API 数据生成，设备为软件模拟；机器人状态暂用轮询，尚无实时推送和持久 runner。</p>
+          <p className="view-note">画面由 API 数据生成，设备为软件模拟；机器人使用持久检查点，状态暂用轮询，尚无实时推送。</p>
         </>}
   </section>;
 }

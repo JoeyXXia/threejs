@@ -25,7 +25,8 @@ export function RobotPanel({ data, error, updatedAt, userId, spaceId, warehouseI
   const busy = runtime && runtime.phase !== 'COMPLETED';
   return <section aria-label="软件机器人" className="robot-panel">
     <h2>单车软件模拟</h2>
-    <p>后端推进任务，浏览器只显示已确认轨迹。当前仅单进程内存运行，不支持进程重启恢复。</p>
+    <p>后端推进任务，浏览器只显示已确认轨迹。检查点已持久化；进程中断后等待租约接管，再从已提交 tick 恢复。</p>
+    {data && <p>已提交事件水位 {data.watermark} · epoch {data.epoch} · 状态版本 {data.stateVersion}</p>}
     <p role="status" data-testid="robot-status">{!data ? '正在读取机器人状态…' : !runtime ? '暂无运行任务'
       : `任务 ${runtime.taskId} · ${runtime.phase} · tick ${runtime.tick} · 逻辑 ${runtime.logicalTimeMs}ms · 电量 ${(runtime.battery / 100).toFixed(2)}% · ${runtime.carrying ? '载货' : '空载'}`}</p>
     {stale && <p role="alert">机器人数据陈旧，已停止外推，仅保留最后确认段。</p>}

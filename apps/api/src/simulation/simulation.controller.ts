@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Inject, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { AuthGuard, type AuthRequest } from '../auth/auth.guard';
 import { SimulationService } from './simulation.service';
 
@@ -13,5 +13,9 @@ export class SimulationController {
   @Post('start')
   start(@Req() req: AuthRequest, @Param('spaceId') spaceId: string, @Param('warehouseId') warehouseId: string, @Body() body: unknown) {
     return this.service.start({ actorId: req.identity.userId, spaceId, warehouseId }, body);
+  }
+  @Get('events')
+  events(@Req() req: AuthRequest, @Param('spaceId') spaceId: string, @Param('warehouseId') warehouseId: string, @Query('after') after = '0') {
+    return this.service.events({ actorId: req.identity.userId, spaceId, warehouseId }, /^\d+$/.test(after) ? Number(after) : NaN);
   }
 }

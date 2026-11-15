@@ -85,7 +85,8 @@ export class InventoryController {
           reserved: stock.reduce((sum, balance) => sum + balance.reserved, 0),
           available: stock.reduce((sum, balance) => sum + balance.available, 0) };
       });
-      return { spaceId, warehouseId, layoutId, layoutVersion: layout.version, asOf: asOf.toISOString(), balances, locationTotals,
+      const watermark = (await tx.warehouseRuntime.findUnique({ where: { warehouseId }, select: { seq: true } }))?.seq ?? 0;
+      return { spaceId, warehouseId, watermark, layoutId, layoutVersion: layout.version, asOf: asOf.toISOString(), balances, locationTotals,
         summary: { onHand: balances.reduce((sum, row) => sum + row.onHand, 0), reserved: balances.reduce((sum, row) => sum + row.reserved, 0),
           available: balances.reduce((sum, row) => sum + row.available, 0), hold: balances.filter((row) => row.quality === 'HOLD').reduce((sum, row) => sum + row.onHand, 0) } } satisfies InventoryResponse;
     });

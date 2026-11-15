@@ -67,6 +67,7 @@ export const layoutSchema = z.object({
 });
 
 export const inventorySchema = z.object({
+  watermark: quantity,
   spaceId: id, warehouseId: id, layoutId: id, layoutVersion: z.number().int().positive(), asOf: z.string().datetime(),
   balances: z.array(z.object({ id, locationId: id, quality: z.enum(['HOLD', 'RELEASED']), ...totals, version: quantity, transit: z.literal(true).optional(),
     sku: z.object({ id, code: z.string(), name: z.string(), unit: z.literal('piece') }),
@@ -196,8 +197,41 @@ export const robotSnapshotSchema = z.object({
 });
 export type RobotSnapshot = z.infer<typeof robotSnapshotSchema>;
 export const simulationResponseSchema = z.object({
+  watermark: quantity, epoch: quantity, stateVersion: quantity,
   spaceId: id, warehouseId: id, role: z.enum(['ADMIN', 'OPERATOR', 'VIEWER']), runtime: robotSnapshotSchema.nullable(),
   allocations: z.array(z.object({ id, label: z.string(), quantity: z.number().int().positive() })),
   staging: z.array(z.object({ id, code: z.string() })),
 });
 export type SimulationResponse = z.infer<typeof simulationResponseSchema>;
+
+const simulationStateSchema = z.object({
+  schemaVersion: z.literal(1), seed: quantity.max(0xffffffff), randomState: quantity.max(0xffffffff),
+  map: z.object({ layoutId: id, version: z.number().int().positive(), width: z.number().int().min(1).max(512),
+    depth: z.number().int().min(1).max(512), blocked: z.array(robotCell).max(65536) }),
+  tickMs: z.literal(250), tick: quantity, logicalTimeMs: quantity, paused: z.boolean(),
+  robot: z.object({ id: z.string().min(1), position: robotCell, direction: z.enum(['N', 'E', 'S', 'W']),
+    status: z.enum(['IDLE', 'MOVING', 'DEPLETED']), battery: quantity.max(10000), path: z.array(robotCell).max(65536), next: quantity }),
+});
+export const robotCheckpointSchema = z.object({
+  format: z.literal(1), actorId: id, taskId: id, allocationId: id, stagingId: id, from: robotCell,
+  loaded: z.boolean(), error: z.string().max(200).nullable(),
+  task: z.object({ simulation: simulationStateSchema, phase: z.enum(['APPROACH', 'LOADING', 'TRANSPORT', 'UNLOADING', 'COMPLETED', 'ERROR']),
+    phaseTicks: quantity, transportPath: z.array(robotCell).min(1).max(65536), error: z.string().nullable() }),
+}).superRefine((value, ctx) => {
+  const s = value.task.simulation, r = s.robot;
+  if (s.logicalTimeMs !== s.tick * s.tickMs || s.map.width * s.map.depth > 65536
+    || r.next > r.path.length || (r.status === 'MOVING' && (r.next < 1 || r.next >= r.path.length))) {
+    ctx.addIssue({ code: 'custom', message: 'Invalid checkpoint clock/path' });
+  }
+});
+export const warehouseEventsSchema = z.object({
+  spaceId: id, warehouseId: id, after: quantity, watermark: quantity,
+  events: z.array(z.object({ seq: z.number().int().positive(), tick: quantity, kind: z.string(), payload: z.unknown(), createdAt: z.string().datetime() })),
+  hasMore: z.boolean(),
+}).superRefine((value, ctx) => {
+  const last = value.events.at(-1)?.seq ?? value.after;
+  if (value.after > value.watermark || last > value.watermark || value.hasMore !== (last < value.watermark)
+    || value.events.some((e, i) => e.seq !== value.after + i + 1)) {
+    ctx.addIssue({ code: 'custom', message: 'Event cursor/order/watermark mismatch' });
+  }
+});

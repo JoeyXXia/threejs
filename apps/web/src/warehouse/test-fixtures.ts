@@ -13,6 +13,7 @@ export function fixtureSnapshot(): WarehouseSnapshot {
       blockedCells: [{ x: 2, z: 1 }, { x: 2, z: 2 }],
     },
     inventory: {
+      watermark: 0,
       spaceId: fixtureId(1), warehouseId: fixtureId(2), layoutId: fixtureId(3), layoutVersion: 1, asOf: '2026-11-02T00:00:00.000Z',
       balances: [{ id: fixtureId(8), locationId: fixtureId(6), quality: 'RELEASED', onHand: 5, reserved: 0, available: 5, version: 0,
         sku: { id: fixtureId(9), code: 'SKU', name: 'fixture', unit: 'piece' }, batch: { id: fixtureId(10), code: 'B', expiresAt: '2030-01-01T00:00:00.000Z' } }],
