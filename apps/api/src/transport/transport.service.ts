@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { Prisma } from '@warehouse-twin/database';
 import { textInput, uuidInput } from '../auth/input';
 import { DatabaseService } from '../database.service';
+import { lockWarehouseState, appendWarehouseEvent } from '../warehouse-state';
 
 type Scope = { spaceId: string; warehouseId: string; actorId: string };
 type Tx = Prisma.TransactionClient;
@@ -24,7 +25,7 @@ export class TransportService {
       const access = await tx.warehouseAccess.findUnique({ where: { userId_spaceId_warehouseId: { userId, spaceId, warehouseId } } });
       if (!access) throw new NotFoundException('仓库不可访问');
       if (access.role === 'VIEWER') throw new ForbiddenException('只读账户不能过账');
-      await tx.$queryRaw`SELECT id FROM "Warehouse" WHERE id=${warehouseId}::uuid FOR UPDATE`;
+      await lockWarehouseState(tx, scope);
       if (expectedLayoutId) {
         const warehouse = await tx.warehouse.findUniqueOrThrow({ where: { id: warehouseId } });
         if (warehouse.activeLayoutId !== expectedLayoutId) throw new ConflictException('布局已变化，停止机器人过账');
@@ -36,8 +37,12 @@ export class TransportService {
   create(scope: Scope, allocationId: string, stagingLocationId: string, reason: string, expectedLayoutId?: string) {
     uuidInput(allocationId);
     uuidInput(stagingLocationId);
-    const { spaceId, warehouseId } = scope;
-    return this.command(scope, reason, async (tx, note) => {
+    return this.command(scope, reason, (tx, note) => this.createInTransaction(tx, scope, allocationId, stagingLocationId, note), expectedLayoutId);
+  }
+
+  // Internal composition only: caller must hold the shared boundary and check write access.
+  async createInTransaction(tx: Tx, scope: Scope, allocationId: string, stagingLocationId: string, note: string) {
+      const { spaceId, warehouseId } = scope;
       const allocation = await tx.allocation.findFirst({
         where: { id: allocationId, spaceId, warehouseId }, include: { task: true, order: true },
       });
@@ -68,7 +73,6 @@ export class TransportService {
       });
       await this.audit(tx, scope, 'TRANSPORT_CREATED', id, note, {}, task);
       return task;
-    }, expectedLayoutId);
   }
 
   take(scope: Scope, taskId: string, reason: string, expectedLayoutId?: string) {
@@ -81,7 +85,10 @@ export class TransportService {
 
   private move(scope: Scope, taskId: string, stage: Stage, reason: string, expectedLayoutId?: string) {
     uuidInput(taskId);
-    return this.command(scope, reason, async (tx, note) => {
+    return this.command(scope, reason, (tx, note) => this.moveInTransaction(tx, scope, taskId, stage, note), expectedLayoutId);
+  }
+
+  async moveInTransaction(tx: Tx, scope: Scope, taskId: string, stage: Stage, note: string) {
       const task = await tx.transportTask.findFirst({
         where: { id: taskId, spaceId: scope.spaceId, warehouseId: scope.warehouseId }, include: { allocation: true },
       });
@@ -108,7 +115,6 @@ export class TransportService {
       await this.audit(tx, scope, taking ? 'TRANSPORT_TAKEN' : 'TRANSPORT_DROPPED', taskId, note,
         { phase: task.phase }, { phase: updated.phase, source, destination, quantity });
       return updated;
-    }, expectedLayoutId);
   }
 
   dispatch(scope: Scope, orderId: string, reason: string) {
@@ -157,8 +163,10 @@ export class TransportService {
     } });
   }
 
-  private audit(tx: Tx, { spaceId, warehouseId, actorId }: Scope, action: string, correlationId: string,
+  private async audit(tx: Tx, { spaceId, warehouseId, actorId }: Scope, action: string, correlationId: string,
     reason: string, before: Prisma.InputJsonObject, after: Prisma.InputJsonObject) {
-    return tx.auditLog.create({ data: { spaceId, warehouseId, actorId, action, correlationId, requestId: randomUUID(), reason, before, after } });
+    const audit = await tx.auditLog.create({ data: { spaceId, warehouseId, actorId, action, correlationId, requestId: randomUUID(), reason, before, after } });
+    await appendWarehouseEvent(tx, { spaceId, warehouseId }, action, { actorId, correlationId });
+    return audit;
   }
 }

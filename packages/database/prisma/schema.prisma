@@ -54,7 +54,35 @@ model Warehouse {
   skus Sku[]
   inboundOrders InboundOrder[]
   outboundOrders OutboundOrder[]
+  runtime WarehouseRuntime?
   @@unique([spaceId, id])
+}
+
+model WarehouseRuntime {
+  warehouseId String @id @db.Uuid
+  spaceId String @db.Uuid
+  ownerId String? @db.Uuid
+  epoch Int @default(0)
+  leaseUntil DateTime? @db.Timestamptz(3)
+  tick Int @default(0)
+  version Int @default(0)
+  seq Int @default(0)
+  checkpoint Json?
+  warehouse Warehouse @relation(fields: [spaceId, warehouseId], references: [spaceId, id], onDelete: Restrict)
+  events WarehouseEvent[]
+  @@unique([spaceId, warehouseId])
+}
+
+model WarehouseEvent {
+  warehouseId String @db.Uuid
+  spaceId String @db.Uuid
+  seq Int
+  tick Int
+  kind String
+  payload Json
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  runtime WarehouseRuntime @relation(fields: [spaceId, warehouseId], references: [spaceId, warehouseId], onDelete: Restrict)
+  @@id([warehouseId, seq])
 }
 
 enum ZoneKind {

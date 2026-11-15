@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { CountListResponse, CountOrderResponse } from '@warehouse-twin/contracts';
 import { Prisma } from '@warehouse-twin/database';
 import { objectInput, textInput, uuidInput } from '../auth/input';
+import { lockWarehouseState, appendWarehouseEvent } from '../warehouse-state';
 import { DatabaseService } from '../database.service';
 
 type Scope = { spaceId: string; warehouseId: string; actorId: string };
@@ -87,7 +88,7 @@ export class CountService {
     try {
       return await this.db.$transaction(async (tx) => {
         await this.access(tx, scope, operation);
-        await tx.$queryRaw`SELECT id FROM "Warehouse" WHERE id=${warehouseId}::uuid AND "spaceId"=${spaceId}::uuid FOR UPDATE`;
+        await lockWarehouseState(tx, scope);
         const identity = { spaceId, warehouseId, actorId, operation, key };
         const previous = await tx.idempotencyRecord.findUnique({ where: { spaceId_warehouseId_actorId_operation_key: identity } });
         if (previous) {
@@ -98,6 +99,7 @@ export class CountService {
         }
         const result = await work(tx);
         await tx.idempotencyRecord.create({ data: { ...identity, requestHash, status: 'COMPLETED', response: result as Prisma.InputJsonObject } });
+        await appendWarehouseEvent(tx, scope, operation, { actorId, orderId: result.id });
         return result;
       }, { timeout: 15000 });
     } catch (error) {

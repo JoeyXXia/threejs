@@ -4,6 +4,7 @@ import { Prisma } from '@warehouse-twin/database';
 import type { OutboundListResponse, OutboundOrderResponse } from '@warehouse-twin/contracts';
 import { DatabaseService } from '../database.service';
 import { objectInput, textInput, uuidInput } from '../auth/input';
+import { lockWarehouseState, appendWarehouseEvent } from '../warehouse-state';
 
 type Scope = { actorId: string; spaceId: string; warehouseId: string };
 const include = { batch: { include: { sku: true } }, allocations: { include: { balance: { include: { location: true } } }, orderBy: { balanceId: 'asc' as const } } } as const;
@@ -67,7 +68,7 @@ export class OutboundService {
     try {
       return await this.db.$transaction(async (tx) => {
         await this.access(tx, scope, true);
-        await tx.$queryRaw`SELECT id FROM "Warehouse" WHERE id=${warehouseId}::uuid AND "spaceId"=${spaceId}::uuid FOR UPDATE`;
+        await lockWarehouseState(tx, scope);
         const identity = { spaceId, warehouseId, actorId, operation, key };
         const old = await tx.idempotencyRecord.findUnique({ where: { spaceId_warehouseId_actorId_operation_key: identity } });
         if (old) {
@@ -76,6 +77,7 @@ export class OutboundService {
         }
         const result = await work(tx);
         await tx.idempotencyRecord.create({ data: { ...identity, requestHash, status: 'COMPLETED', response: result as unknown as Prisma.InputJsonValue } });
+        await appendWarehouseEvent(tx, scope, operation, { actorId, orderId: result.id });
         return result;
       }, { timeout: 15000 });
     } catch (error) {

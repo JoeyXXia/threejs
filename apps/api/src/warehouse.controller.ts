@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { DatabaseService } from './database.service';
 import { AuthGuard, AuthRequest } from './auth/auth.guard';
 import { objectInput, textInput, uuidInput } from './auth/input';
+import { lockWarehouseState, appendWarehouseEvent } from './warehouse-state';
 
 @Controller('spaces/:spaceId/warehouses/:warehouseId')
 @UseGuards(AuthGuard)
@@ -41,6 +42,7 @@ export class WarehouseController {
       const currentAccess = await tx.warehouseAccess.findUnique({ where: { userId_spaceId_warehouseId: { userId: req.identity.userId, spaceId, warehouseId } } });
       if (!currentAccess) throw new NotFoundException();
       if (currentAccess.role === 'VIEWER') throw new ForbiddenException('Read only');
+      await lockWarehouseState(tx, { spaceId, warehouseId });
       const before = await tx.warehouse.findUnique({ where: { id: warehouseId } });
       const updated = await tx.warehouse.updateMany({
         where: { id: warehouseId, spaceId, version: input.version as number },
@@ -52,6 +54,7 @@ export class WarehouseController {
         requestId: randomUUID(), before: { name: before?.name ?? '', version: input.version as number },
         after: { name, version: (input.version as number) + 1 },
       } });
+      await appendWarehouseEvent(tx, { spaceId, warehouseId }, 'WAREHOUSE_RENAMED', { actorId: req.identity.userId, name });
       return { id: warehouseId, spaceId, name, version: (input.version as number) + 1, role: currentAccess.role };
     });
   }
