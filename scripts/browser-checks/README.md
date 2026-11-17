@@ -143,3 +143,17 @@ npx --yes --package @playwright/cli playwright-cli -s=warehouse-day15 close
 ```
 
 脚本逐格核对架体与服务点颜色，验证切换 2D 和 QC 筛选后图像保持一致，通过响应拦截制造断图，再恢复真实布局。返回可走格数、货位数、独立服务点数和分区序列，截图写入 `output/playwright/day-15`。运行结束后移除响应拦截。
+
+## Day 20 整单上架与人工发运
+
+使用全新 `pnpm qa:browser` 环境（不要执行 reserve 等夹具命令），确认 QA READY 后打开独立会话：
+
+```powershell
+New-Item -ItemType Directory -Force output/playwright/day-20
+npx --no-install --package @playwright/cli playwright-cli -s=warehouse-day20 open http://127.0.0.1:15174 --browser chrome
+npx --no-install --package @playwright/cli playwright-cli -s=warehouse-day20 run-code --filename scripts/browser-checks/day20-putaway-dispatch.js
+npx --no-install --package @playwright/cli playwright-cli -s=warehouse-day20 close
+# 向 QA 终端输入 stop，确认退出。
+```
+
+回调以测试账户登录，真实 UI 创建 4 件新批次入库单、收货和质检；选择空储位启动上架；创建/分配新批次出库单，验证提前发运 409；软件机器人搬运到暂存，刷新后保持检查点/场景；人工确认发运时让真实后端先提交、再由 Playwright 丢弃响应，随后通过 UI 原参数重试。断言两次发运 key 相同、搬运不扣现存、确认只扣一次、最终仓库对账一致。截图位于 `output/playwright/day-20`，脚本返回实际库存摘要。每轮使用新隔离库，不能把脚本中断后的部分流程当作通过。

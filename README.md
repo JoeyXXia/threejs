@@ -2,7 +2,7 @@
 
 WMS 业务驱动的智能仓库数字孪生演示系统。样本为合成数据，库存与流水由 PostgreSQL 持久化，设备为软件模拟。
 
-当前进度为 Day 19 持久 runner、tick 与事件水位。PostgreSQL 保存检查点、owner lease、epoch 和提交序号；旧 runner、旧 tick 或旧状态版本不能覆盖已提交状态。入库、出库、盘点、运输及仓库资料写入使用统一仓库/runtime 提交锁，取放、检查点和事件同事务提交。真实 API 停止/重启续跑与限制见 [Day 19 验收报告](reports/day-19-acceptance.md) 和 [持久运行设计](docs/adr/0011-persistent-runtime-and-events.md)。前端仍每 250ms 轮询，仅显示已确认轨迹，尚无 Socket 推送；取放到达暂存区后不自动发运。纯核心与 A* 见 [Day 17](reports/day-17-acceptance.md)、[Day 16](reports/day-16-acceptance.md)，导航网格见 [Day 15](reports/day-15-acceptance.md)。收货、质检、预占、盘点和台账已接入 PostgreSQL。Day 14 阶段演示见 [v0.2-wms 发布说明](docs/releases/v0.2-wms.md)。
+当前进度为 Day 20 整单上架与人工发运。新增质检放行后 QC → TRANSIT → STORAGE 单车搬运，目标容量/批次预留与来源预占同事务建立；上架落货后可用于出库分配。出库页支持整单到齐暂存区后人工确认发运，网络结果不确定时原参数重试不重复扣货。详见 [Day 20 验收报告](reports/day-20-acceptance.md) 和 [ADR 0012](docs/adr/0012-putaway-and-operator-dispatch.md)。Day 19 持久 runner、tick 与事件水位继续复用。PostgreSQL 保存检查点、owner lease、epoch 和提交序号；旧 runner、旧 tick 或旧状态版本不能覆盖已提交状态。入库、出库、盘点、运输及仓库资料写入使用统一仓库/runtime 提交锁，取放、检查点和事件同事务提交。真实 API 停止/重启续跑与限制见 [Day 19 验收报告](reports/day-19-acceptance.md) 和 [持久运行设计](docs/adr/0011-persistent-runtime-and-events.md)。前端仍每 250ms 轮询，仅显示已确认轨迹，尚无 Socket 推送；取放到达暂存区后不自动发运。纯核心与 A* 见 [Day 17](reports/day-17-acceptance.md)、[Day 16](reports/day-16-acceptance.md)，导航网格见 [Day 15](reports/day-15-acceptance.md)。收货、质检、预占、盘点和台账已接入 PostgreSQL。Day 14 阶段演示见 [v0.2-wms 发布说明](docs/releases/v0.2-wms.md)。
 
 ## 开发
 
@@ -61,9 +61,9 @@ Day 11 使用同一写测试库和临时 API 13006 验证盘点。侧栏“盘�
 
 Day 12 使用同一写测试库和临时 API 13007 验证台账。仓库管理员和操作员可从侧栏打开“仓库台账”。仓库前缀下的 `GET wms` 支持流水类型、批次和各自的流水及审计游标，每页 25 条。`GET wms/reconcile` 只读取当前仓库并返回差异。台账的过期、7 天内到期与质检隔离预警使用该请求的同一时间点。
 
-入库入口为侧栏“仓库名 入库与质检”，API 前缀 `/spaces/:spaceId/warehouses/:warehouseId/inbound-orders`：GET 列表/选择项、POST 创建、POST `:orderId/receive`、POST `:orderId/inspect`。写请求带 `key` 和 `reason`，质检另带 `decision=PASS/REJECT`；只允许 admin/operator。日期是 UTC，页面选择的到期日从零点开始到期。收货可接收过期批次到 HOLD，但放行会拒绝。只支持全量操作，不是部分收货或机器人搬运。外部变化仍手动刷新，自己的操作成功后精确重读相关 Query。
+入库入口为侧栏“仓库名 入库与质检”，API 前缀 `/spaces/:spaceId/warehouses/:warehouseId/inbound-orders`：GET 列表/选择项、POST 创建、POST `:orderId/receive`、POST `:orderId/inspect`。写请求带 `key` 和 `reason`，质检另带 `decision=PASS/REJECT`；只允许 admin/operator。日期是 UTC，页面选择的到期日从零点开始到期。收货可接收过期批次到 HOLD，但放行会拒绝。收货/质检只支持全量；放行后的整单上架在场景“软件机器人”选择“质检放行上架”，仍为软件模拟。外部变化仍手动刷新，自己的操作成功后精确重读相关 Query。
 
-出库入口为侧栏“仓库名 出库与预占”，API 前缀 `/spaces/:spaceId/warehouses/:warehouseId/outbound-orders`：GET 列表/推荐、POST 创建、POST `:orderId/allocate`。写请求带 `key`、`reason`，创建另带 `skuId`、`batchId`、`quantity`。创建不占库存；分配重新验证当前布局 STORAGE、RELEASED、未过期来源，同批不足整单拒绝，不自动跨批。QC 即使已放行也不计储存区可分配量，不能直接使用仓库汇总 available 代替。分配成功只增加 reserved，后续位置转移由运输阶段过账。当前无盘点冻结模型；跨刷新未知创建结果先刷新核对，预占后到期不自动释放。
+出库入口为侧栏“仓库名 出库与预占”，API 前缀 `/spaces/:spaceId/warehouses/:warehouseId/outbound-orders`：GET 列表/推荐、POST 创建、POST `:orderId/allocate`、POST `:orderId/dispatch`。写请求带 `key`、`reason`，创建另带 `skuId`、`batchId`、`quantity`。创建不占库存；分配重新验证当前布局 STORAGE、RELEASED、未过期来源，同批不足整单拒绝，不自动跨批。QC 即使已放行也不计储存区可分配量，不能直接使用仓库汇总 available 代替。分配成功只增加 reserved，后续位置转移由运输阶段过账。分配和运输排除活动盘点冻结位置；跨刷新未知创建结果先刷新核对，预占后到期不自动释放。
 
 浏览器复验：交互终端运行 `pnpm qa:browser`，使用独立临时 DB，不读取 `.env`。详见[验收说明](scripts/browser-checks/README.md)；当前已实测正常 Chrome 与禁用 WebGL 的独立会话。CLI 截图和快照保存在忽略的 `output/playwright/`，最终截图见 [Day 6 预览](reports/day-06-preview.png)。这不代表已完成跨设备性能测试。
 

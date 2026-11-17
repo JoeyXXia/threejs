@@ -338,3 +338,64 @@ test('a killed API process restarts from the persisted tick and completes with a
     }, null, 2));
   } finally { await stopApi(); }
 });
+
+test('putaway survives an API kill after pickup, then resumes once without a second ledger posting', async () => {
+  const { InboundService } = require('../../apps/api/dist/inbound/inbound.service');
+  const inbound = new InboundService(db), note = 'Day20 restart fixture';
+  const cmd = () => ({ key: randomUUID(), reason: note });
+  const sku = await db.sku.findFirstOrThrow({ where: { warehouseId: scope.warehouseId, code: 'SKU-A' } });
+  const qc = await db.location.findFirstOrThrow({ where: { warehouseId: scope.warehouseId, kind: 'QC' } });
+  const storage = await db.location.findFirstOrThrow({ where: { warehouseId: scope.warehouseId, kind: 'STORAGE', balances: { none: { onHand: { gt: 0 } } } } });
+  const receipt = await inbound.create(scope, { ...cmd(), skuId: sku.id, qcLocationId: qc.id, batchCode: randomUUID(), quantity: 3, producedAt: null, expiresAt: null });
+  await inbound.phase(scope, receipt.id, 'receive', cmd());
+  await inbound.phase(scope, receipt.id, 'inspect', { ...cmd(), decision: 'PASS' });
+  const putawayInput = { kind: 'PUTAWAY', inboundOrderId: receipt.id, targetLocationId: storage.id, reason: note };
+  const origin = 'http://127.0.0.1:13019';
+  const base = `${origin}/spaces/${scope.spaceId}/warehouses/${scope.warehouseId}`;
+  let child;
+  async function until(read, predicate, timeoutMs = 20000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const value = await read();
+      if (predicate(value)) return value;
+      await delay(40);
+    }
+    assert.fail('API/checkpoint condition timed out');
+  }
+  async function startApi() {
+    child = spawn(process.execPath, ['apps/api/dist/main.js'], { cwd: resolve(__dirname, '../..'), windowsHide: true,
+      env: { ...process.env, DATABASE_URL: url, API_HOST: '127.0.0.1', API_PORT: '13019', NODE_ENV: 'test', SESSION_SECURE: 'false' }, stdio: 'ignore' });
+    await until(() => fetch(`${origin}/health`).then((r) => r.ok).catch(() => false), Boolean);
+    const login = await fetch(`${origin}/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'WarehouseTwin' },
+      body: JSON.stringify({ email: 'admin@demo.local', password: process.env.DEMO_PASSWORD }) });
+    assert.equal(login.status, 201);
+    return login.headers.get('set-cookie').split(';')[0];
+  }
+  async function stopApi() {
+    if (child && child.exitCode === null) { const closed = once(child, 'close'); child.kill(); await closed; }
+  }
+  try {
+    let cookie = await startApi();
+    const started = await fetch(`${base}/simulation/start`, { method: 'POST', headers: { Cookie: cookie, 'Content-Type': 'application/json', 'X-Requested-With': 'WarehouseTwin' }, body: JSON.stringify(putawayInput) });
+    assert.equal(started.status, 201);
+    const task = await started.json();
+    const first = await until(() => fetch(`${base}/simulation`, { headers: { Cookie: cookie } }).then((r) => r.json()), (r) => r.runtime.phase === 'TRANSPORT');
+    await stopApi();
+    const saved = await runtimeRow();
+    assert.equal(saved.checkpoint.taskId, task.taskId);
+    assert.ok(saved.tick >= first.runtime.tick);
+    cookie = await startApi();
+    const resumed = await until(() => fetch(`${base}/simulation`, { headers: { Cookie: cookie } }).then((r) => r.json()), (r) => r.runtime.tick > saved.tick);
+    assert.equal(resumed.runtime.taskId, task.taskId);
+    assert.ok(resumed.epoch > saved.epoch);
+    const done = await until(() => fetch(`${base}/simulation`, { headers: { Cookie: cookie } }).then((r) => r.json()), (r) => r.runtime.phase === 'COMPLETED');
+    assert.equal(done.runtime.logicalTimeMs, done.runtime.tick * 250);
+    assert.equal(await db.inventoryMovement.count({ where: { warehouseId: scope.warehouseId, businessKey: { startsWith: 'putaway:' } } }), 2);
+    await reconciled();
+    writeFileSync(resolve(__dirname, '../../reports/day20-restart.json'), JSON.stringify({
+      capturedAt: new Date().toISOString(), taskId: task.taskId, savedTick: saved.tick, oldEpoch: saved.epoch,
+      resumedTick: resumed.runtime.tick, newEpoch: resumed.epoch, completedTick: done.runtime.tick,
+      watermark: done.watermark, processRestarted: true,
+    }, null, 2));
+  } finally { await stopApi(); }
+});

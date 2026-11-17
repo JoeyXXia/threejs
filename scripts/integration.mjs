@@ -51,7 +51,7 @@ try {
   await run(['scripts/runtime-upgrade-check.mjs'], root, { ...env, UPGRADE_TEST_DATABASE_URL: upgradeDatabaseUrl });
   // Use Node's normal module loader for direct imports of the Nest domain services.
   await run(['--test', '--test-reporter=spec', '--test-reporter-destination=stdout',
-    '--test-reporter=tap', '--test-reporter-destination=reports/integration-transport.tap', 'tests/transport/transport.test.cjs', 'tests/transport/simulation.test.cjs']);
+    '--test-reporter=tap', '--test-reporter-destination=reports/integration-transport.tap', 'tests/transport/transport.test.cjs', 'tests/transport/simulation.test.cjs', 'tests/transport/putaway.test.cjs']);
   await run(['node_modules/jest/bin/jest.js', '--config', 'tests/integration/jest.config.cjs', '--runInBand', '--json', '--outputFile', 'reports/integration-jest.json']);
   // Verify persisted rows after a real database restart, once all HTTP test processes have closed.
   await pg.stop(); await pg.start();
