@@ -1,6 +1,7 @@
 const { after, beforeEach, test } = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
+const { writeFileSync } = require('node:fs');
 const { PrismaClient, reconcileWarehouse } = require('../../packages/database');
 const { ids } = require('../../packages/database/seed.cjs');
 const { seedInventory } = require('../../packages/database/seed-inventory.cjs');
@@ -10,6 +11,7 @@ const { PutawayService } = require('../../apps/api/dist/transport/putaway.servic
 const { OutboundService } = require('../../apps/api/dist/outbound/outbound.service');
 const { InboundService } = require('../../apps/api/dist/inbound/inbound.service');
 const { CountService } = require('../../apps/api/dist/count/count.service');
+const { InventoryController } = require('../../apps/api/dist/inventory.controller');
 const { lockWarehouseState } = require('../../apps/api/dist/warehouse-state');
 
 const url = process.env.INBOUND_TEST_DATABASE_URL;
@@ -169,4 +171,54 @@ test('take and drop event failures roll back every durable effect; committed los
     await reconciled();
   }
   assert.equal((await runner.read(scope)).runtime.phase, 'COMPLETED');
+});
+
+test('Day21 stop-at-phase inspection finds cargo in every putaway and outbound phase without editing business rows', async () => {
+  const inventory = new InventoryController(db), samples = [];
+  const request = { identity: { userId: scope.actorId } };
+  async function inspectEveryPhase(kind, startInput, sourceId, targetId) {
+    const started = await runner.start(scope, startInput);
+    const phases = new Set();
+    for (let i = 0; i < 250; i++) {
+      // No onModuleInit(): the test driver stops stepping while inspecting persisted state.
+      // This is not a new product-level pause API or a direct SQL state change.
+      const state = await runner.read(scope), runtime = state.runtime;
+      assert.notEqual(runtime.phase, 'ERROR');
+      if (!phases.has(runtime.phase)) {
+        const snapshot = await inventory.inventory(request, scope.spaceId, scope.warehouseId);
+        assert.equal(snapshot.watermark, state.watermark);
+        const cargo = snapshot.balances.filter((row) => row.batch.id === receipt.batchId && row.onHand > 0);
+        assert.equal(cargo.length, 1);
+        const moving = ['TRANSPORT', 'UNLOADING'].includes(runtime.phase);
+        const complete = runtime.phase === 'COMPLETED';
+        assert.equal(cargo[0].onHand, 4);
+        assert.equal(cargo[0].reserved, complete && kind === 'PUTAWAY' ? 0 : 4);
+        assert.equal(Boolean(cargo[0].transit), moving);
+        if (!moving) assert.equal(cargo[0].locationId, complete ? targetId : sourceId);
+        assert.equal(snapshot.summary.onHand, 66);
+        const events = await runner.events(scope, state.watermark - 1);
+        assert.equal(events.events[0].seq, state.watermark);
+        assert.equal(events.events[0].payload.taskId, started.taskId);
+        assert.equal(events.events[0].payload.tick, runtime.tick);
+        await reconciled();
+        samples.push({ kind, phase: runtime.phase, tick: runtime.tick, watermark: state.watermark,
+          taskId: started.taskId, locationId: cargo[0].locationId, transit: Boolean(cargo[0].transit),
+          onHand: cargo[0].onHand, reserved: cargo[0].reserved, warehouseOnHand: snapshot.summary.onHand });
+        phases.add(runtime.phase);
+      }
+      if (runtime.phase === 'COMPLETED') break;
+      await runner.advance();
+    }
+    assert.deepEqual([...phases], ['APPROACH', 'LOADING', 'TRANSPORT', 'UNLOADING', 'COMPLETED']);
+  }
+  await inspectEveryPhase('PUTAWAY', input(), qcId, target.id);
+  const order = await outbound.create(scope, { ...command(), skuId, batchId: receipt.batchId, quantity: 4 });
+  const allocated = await outbound.allocate(scope, order.id, command());
+  const staging = await db.location.findFirstOrThrow({ where: { warehouseId: scope.warehouseId, kind: 'OUTBOUND' } });
+  await inspectEveryPhase('OUTBOUND', { allocationId: allocated.allocations[0].id, stagingLocationId: staging.id, reason: note }, target.id, staging.id);
+  await outbound.dispatch(scope, order.id, command());
+  assert.equal((await stock())._sum.onHand, 62);
+  await reconciled();
+  writeFileSync('reports/day21-cargo-checkpoints.json', JSON.stringify({ capturedAt: new Date().toISOString(),
+    testDriverStoppedBetweenTicks: true, productPauseApi: false, samples, finalOnHand: 62, reconciled: true }, null, 2));
 });
