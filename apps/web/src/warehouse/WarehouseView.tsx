@@ -12,6 +12,8 @@ import { InventoryDetails } from './InventoryDetails';
 import { InventoryTable } from './InventoryTable';
 import { NavigationDebug } from './NavigationDebug';
 import { useSimulation } from './robot-data';
+import { FleetPanel } from './FleetPanel';
+import { useFleet } from './fleet-data';
 import { RobotPanel } from './RobotPanel';
 
 const WarehouseScene = lazy(() => import('./WarehouseScene').then((module) => ({ default: module.WarehouseScene })));
@@ -20,6 +22,7 @@ type Props = { userId: string; spaceId: string; warehouseId: string; name: strin
   initialBatchId?: string; warning?: InventoryWarning | null };
 
 export function WarehouseView({ userId, spaceId, warehouseId, name, onUnauthorized, initialBatchId = '', warning = null }: Props) {
+  const fleetQuery = useFleet(userId, spaceId, warehouseId, onUnauthorized);
   const robotQuery = useSimulation(userId, spaceId, warehouseId, onUnauthorized);
   // A route-keyed instance: switching warehouse/logout discards these UI choices.
   const [store] = useState(createSceneStore);
@@ -63,8 +66,9 @@ export function WarehouseView({ userId, spaceId, warehouseId, name, onUnauthoriz
         : <>
           <div className="snapshot-meta"><span>布局 v{query.data.layout.layoutVersion.version} · {query.data.layout.locations.length} 个货位</span>
             <span>{query.isFetching ? '同步中，显示上次成功快照' : `数据时间 ${new Date(query.data.inventory.asOf).toLocaleTimeString()}`}</span></div>
-          <RobotPanel data={robotQuery.data} error={robotQuery.error} updatedAt={robotQuery.dataUpdatedAt}
-            userId={userId} spaceId={spaceId} warehouseId={warehouseId} onUnauthorized={onUnauthorized} />
+          <FleetPanel data={fleetQuery.data} options={robotQuery.data} error={fleetQuery.error} userId={userId} spaceId={spaceId} warehouseId={warehouseId} onUnauthorized={onUnauthorized} />
+          {!fleetQuery.data?.enabled && <RobotPanel data={robotQuery.data} error={robotQuery.error} updatedAt={robotQuery.dataUpdatedAt}
+            userId={userId} spaceId={spaceId} warehouseId={warehouseId} onUnauthorized={onUnauthorized} />}
           <div className="metrics" aria-label="库存汇总">
             {([['全仓现存', query.data.inventory.summary.onHand], ['可用', query.data.inventory.summary.available], ['预占', query.data.inventory.summary.reserved], ['待检', query.data.inventory.summary.hold]] as const)
               .map(([label, value]) => <div key={label}><span>{label}</span><strong>{value}<small> 件</small></strong></div>)}
@@ -117,7 +121,7 @@ export function WarehouseView({ userId, spaceId, warehouseId, name, onUnauthoriz
           {ui.viewMode === 'scene' && views.length === 0 && <p role="status" className="empty-state">当前筛选没有货位。</p>}
           {ui.viewMode === 'scene' ? <div className="scene-canvas" aria-label="三维仓库"><SceneBoundary key={`${query.data.layout.layoutVersion.id}:${sceneGeneration}`}>
             <Suspense fallback={<p role="status" className="scene-fallback">正在载入 3D 场景…</p>}><WarehouseScene
-              snapshot={query.data} robot={robotQuery.data?.runtime ?? null} views={views} showZones={ui.showZones} showServiceCells={ui.showServiceCells} selectedLocationId={selected?.location.id ?? null}
+              snapshot={query.data} fleet={fleetQuery.data?.enabled ? fleetQuery.data : null} robot={robotQuery.data?.runtime ?? null} views={views} showZones={ui.showZones} showServiceCells={ui.showServiceCells} selectedLocationId={selected?.location.id ?? null}
               zoneFilter={ui.zoneFilter} cameraMode={ui.cameraMode} cameraRequest={cameraRequest} onSelect={ui.selectLocation} /></Suspense>
           </SceneBoundary></div> : <InventoryTable views={views} selectedId={ui.selectedLocationId} onSelect={ui.selectLocation} onFocus={ui.focusLocation} />}
           <ul className="zone-legend" aria-label="库存状态图例">{Object.entries(inventoryAppearance).map(([key, entry]) => <li key={key}><i style={{ background: entry.color }} />{entry.name}</li>)}</ul>

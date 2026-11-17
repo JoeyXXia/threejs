@@ -2,7 +2,7 @@
 
 WMS 业务驱动的智能仓库数字孪生演示系统。样本为合成数据，库存与流水由 PostgreSQL 持久化，设备为软件模拟。
 
-当前进度为 Day 21 轻量单车演示与 `v0.3-single-robot` 阶段归档。[40.64 秒完整录像](reports/day-21-demo.webm)、[Day 21 验收报告](reports/day-21-acceptance.md) 与 [v0.3 发布说明](docs/releases/v0.3-single-robot.md) 展示收货、质检、上架、出库搬运、人工发运和 TRANSIT/最终对账。版本以 Git 标签归档，不代表部署、产品级暂停/历史回放或多车避碰。Day 20 已完成整单上架与人工发运。新增质检放行后 QC → TRANSIT → STORAGE 单车搬运，目标容量/批次预留与来源预占同事务建立；上架落货后可用于出库分配。出库页支持整单到齐暂存区后人工确认发运，网络结果不确定时原参数重试不重复扣货。详见 [Day 20 验收报告](reports/day-20-acceptance.md) 和 [ADR 0012](docs/adr/0012-putaway-and-operator-dispatch.md)。Day 19 持久 runner、tick 与事件水位继续复用。PostgreSQL 保存检查点、owner lease、epoch 和提交序号；旧 runner、旧 tick 或旧状态版本不能覆盖已提交状态。入库、出库、盘点、运输及仓库资料写入使用统一仓库/runtime 提交锁，取放、检查点和事件同事务提交。真实 API 停止/重启续跑与限制见 [Day 19 验收报告](reports/day-19-acceptance.md) 和 [持久运行设计](docs/adr/0011-persistent-runtime-and-events.md)。前端仍每 250ms 轮询，仅显示已确认轨迹，尚无 Socket 推送；取放到达暂存区后不自动发运。纯核心与 A* 见 [Day 17](reports/day-17-acceptance.md)、[Day 16](reports/day-16-acceptance.md)，导航网格见 [Day 15](reports/day-15-acceptance.md)。收货、质检、预占、盘点和台账已接入 PostgreSQL。Day 14 阶段演示见 [v0.2-wms 发布说明](docs/releases/v0.2-wms.md)。
+当前进度为 Day 22 多车分配与保守下一步协调。main 支持显式初始化 3–5 台软件车、持久唯一归属、同事务批次取放和占格/等待展示，见 [Day 22 验收报告](reports/day-22-acceptance.md) 与 [ADR 0013](docs/adr/0013-persistent-fleet-coordination.md)。不保证无死锁，不含 Day 23 通道许可。最新历史阶段标签 `v0.3-single-robot` 仍归档 Day 21，不覆盖旧版本。[40.64 秒完整录像](reports/day-21-demo.webm)、[Day 21 验收报告](reports/day-21-acceptance.md) 与 [v0.3 发布说明](docs/releases/v0.3-single-robot.md) 展示收货、质检、上架、出库搬运、人工发运和 TRANSIT/最终对账。版本以 Git 标签归档，不代表部署、产品级暂停/历史回放或多车避碰。Day 20 已完成整单上架与人工发运。新增质检放行后 QC → TRANSIT → STORAGE 单车搬运，目标容量/批次预留与来源预占同事务建立；上架落货后可用于出库分配。出库页支持整单到齐暂存区后人工确认发运，网络结果不确定时原参数重试不重复扣货。详见 [Day 20 验收报告](reports/day-20-acceptance.md) 和 [ADR 0012](docs/adr/0012-putaway-and-operator-dispatch.md)。Day 19 持久 runner、tick 与事件水位继续复用。PostgreSQL 保存检查点、owner lease、epoch 和提交序号；旧 runner、旧 tick 或旧状态版本不能覆盖已提交状态。入库、出库、盘点、运输及仓库资料写入使用统一仓库/runtime 提交锁，取放、检查点和事件同事务提交。真实 API 停止/重启续跑与限制见 [Day 19 验收报告](reports/day-19-acceptance.md) 和 [持久运行设计](docs/adr/0011-persistent-runtime-and-events.md)。前端仍每 250ms 轮询，仅显示已确认轨迹，尚无 Socket 推送；取放到达暂存区后不自动发运。纯核心与 A* 见 [Day 17](reports/day-17-acceptance.md)、[Day 16](reports/day-16-acceptance.md)，导航网格见 [Day 15](reports/day-15-acceptance.md)。收货、质检、预占、盘点和台账已接入 PostgreSQL。Day 14 阶段演示见 [v0.2-wms 发布说明](docs/releases/v0.2-wms.md)。
 
 ## 开发
 
@@ -106,3 +106,11 @@ Day 3 只读入口：`GET /api/spaces/:spaceId/warehouses/:warehouseId/layout` �
 - [面试与 AI 协作](doc/planning/WarehouseTwin-面试与AI协作手册.md)
 
 原始计划在 `doc/planning`，保留原路径；新增工程文档在 `docs`。沿用当前 `node-react-three` 工作区，逻辑项目名为 WarehouseTwin。[GitHub 仓库](https://github.com/JoeyXXia/threejs)；阶段发布通过 Git 标签追溯，具体提交和同步状态以 Git 为准。
+
+## Day 22 多车使用
+
+已有库升级先停止旧 API，执行 `pnpm db:generate`、`pnpm db:migrate`，再启动应用；不要 reset。未启用多车的仓库继续使用旧单车流程。在场景中输入原因并初始化 3–5 台车；只能在旧单车没有活动/异常任务时切换，保留旧位置、电量和 tick。初始化后不能重置车队或改车数来丢弃任务。
+
+接口位于仓库前缀下：`GET fleet`、`POST fleet/initialize`（count/reason）、`POST fleet/assign`（robotId/kind/reason 与既有来源/目标 ID）。GET 对 viewer 开放，POST 仅 admin/operator；调用方不能指定 actor、路径、tick 或库存。分配与固定优先级/等待排序由后端决定。取/放继续走原领域唯一动作键，发运仍在出库页面人工确认。
+
+空闲、已完成和 ERROR 车继续占格；同一出入口/目标可能出现真实对向等待，页面展示 OCCUPIED、EDGE_SWAP、TARGET_CONFLICT 及阻挡车/等待 tick。无自动挪车、重新规划、恢复操作台或无死锁承诺。不要手改数据库解除货物预占；相关资源与恢复机制在后续计划实施。

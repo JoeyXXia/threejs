@@ -180,3 +180,19 @@ npx --no-install --package @playwright/cli playwright-cli -s=warehouse-day21 clo
 录像需要完整解码和实际播放后才归档。播放检查脚本的 file URL 对应本工作区，其他克隆路径需修改；抽帧点对应本轮 40.64 秒录像，重录后应按真实内容调整，不能将过场当在途证据。25fps 仅是录像设置。ffmpeg 完整检查命令、SHA-256 和本轮结果见 [Day 21 验收报告](../../reports/day-21-acceptance.md)。重复录制留在本地 output 或新运行副本，不覆盖 reports 中已归档媒体/历史 PDF。
 
 视频暂停和集成测试停止逐 tick 推进用于查货，产品没有暂停 API 或历史回放；录像中 runner 没有被伪造暂停。仅单车，不宣称多车协调。原始 CLI/解码输出与辅助文件留在 output，只有明确的本轮录像和 PNG 进入 reports。
+
+## Day 22 持久五车与真实等待
+
+必须使用新 `pnpm qa:browser` 隔离库，且先等待集成测试 PostgreSQL 完全退出。不要向 QA 输入 reserve/layout 等额外夹具命令。
+
+```powershell
+New-Item -ItemType Directory -Force output/playwright/day-22
+npx --no-install --package @playwright/cli playwright-cli -s=warehouse-day22 open http://127.0.0.1:15174 --browser chrome
+npx --no-install --package @playwright/cli playwright-cli -s=warehouse-day22 run-code --filename scripts/browser-checks/day22-fleet.js
+npx --no-install --package @playwright/cli playwright-cli -s=warehouse-day22 close
+# 向 QA 终端输入 stop，并等待退出。
+```
+
+脚本从登录页启动，用 QA 测试管理员进入 A 仓；UI 初始化五车、选择车辆并分配。入库/出库准备夹具使用当前账户真实授权 API（非 SQL），三台不同车辆顺序完成 QC 上架，再给五车各分配一个出库任务，观察至少 70 tick 的冲突等待。断言刷新后归属不变、库存 65/预占 5、对账一致，并逐条检查捕获水位之前的持久 FLEET_TICK，不允许同格、进入他车原占格或 edge swap。最后换 viewer 验证原生提交按钮 disabled、写入 403、跨空间 404。
+
+返回的 carrying/wait 数量是轮询观测次数，不是唯一动作数或性能指标。五个并发出库任务不保证全部完成，共享暂存点/完成停车可造成真实等待；不自动挪车、重置或改库存来制造完成。截图写入 `output/playwright/day-22/day-22-fleet.png`，完整脚本成功且人工检查后才复制到 reports。单次中断或仅截图成功不算整体验收通过。
