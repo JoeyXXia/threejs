@@ -14,6 +14,10 @@ export class OutboundController {
   create(@Req() req: AuthRequest, @Param('spaceId') spaceId: string, @Param('warehouseId') warehouseId: string, @Body() body: unknown) {
     return this.service.create(this.service.scope(req.identity.userId, spaceId, warehouseId), body);
   }
+  @Post(':orderId/dispatch')
+  dispatch(@Req() req: AuthRequest, @Param('spaceId') spaceId: string, @Param('warehouseId') warehouseId: string, @Param('orderId') orderId: string, @Body() body: unknown) {
+    return this.service.dispatch(this.service.scope(req.identity.userId, spaceId, warehouseId), orderId, body);
+  }
   @Post(':orderId/allocate')
   allocate(@Req() req: AuthRequest, @Param('spaceId') spaceId: string, @Param('warehouseId') warehouseId: string, @Param('orderId') orderId: string, @Body() body: unknown) {
     return this.service.allocate(this.service.scope(req.identity.userId, spaceId, warehouseId), orderId, body);

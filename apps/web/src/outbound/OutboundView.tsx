@@ -30,7 +30,7 @@ export function OutboundView({ userId, spaceId, warehouseId, name, onUnauthorize
       }
       return { result, active: current.active };
     },
-    onSuccess: ({ result, active }) => { if (active) setMessage(result.status === 'ALLOCATED' ? '整单预占已提交；现存数量不变，库存已重新读取。' : '出库单已创建，尚未预占。'); },
+    onSuccess: ({ result, active }) => { if (active) setMessage(result.status === 'DISPATCHED' ? '发运已提交，现存已扣减；重复确认不会再次扣减。' : result.status === 'ALLOCATED' ? '整单预占已提交；现存数量不变，库存已重新读取。' : '出库单已创建，尚未预占。'); },
     onError: (error) => { if (!lifecycle.current.active) return; if (error instanceof ApiError && error.status === 401) onUnauthorized(); else setMessage(`${error.message}。结果不确定时请保持原参数重试，或刷新核对单据。`); },
   });
   function create(event: FormEvent<HTMLFormElement>) {
@@ -44,7 +44,7 @@ export function OutboundView({ userId, spaceId, warehouseId, name, onUnauthorize
   const recommendations = query.data?.recommendations.filter((row) => row.skuId === skuId) ?? [];
   return <section className="workspace inbound-workspace" aria-label="出库与预占">
     <div className="view-heading"><div><p className="eyebrow">出库 / 批次 / 分配</p><h1>{name} · 出库与预占</h1></div><Link to={`/warehouses/${spaceId}/${warehouseId}`}>查看场景与库存</Link></div>
-    <p className="view-note">一单一个 SKU / 批次。创建不占库存，确认后全量预占；不搬运、不发运、不减少现存。当前不支持取消或自动释放。</p>
+    <p className="view-note">一单一个 SKU / 批次。创建不占库存，确认后全量预占；预占和搬运不减少现存，整单到齐暂存区后由操作员确认发运扣减。当前不支持取消或自动释放。</p>
     {message && <p role="status">{message}</p>}
     <button disabled={query.isFetching || mutation.isPending} onClick={() => { void query.refetch(); }}>刷新出库与推荐</button>
     {query.isPending ? <p role="status">正在读取出库单…</p> : query.isError ? <p role="alert">出库数据不可用：{query.error.message}</p> : <>
@@ -72,6 +72,13 @@ export function OutboundView({ userId, spaceId, warehouseId, name, onUnauthorize
           mutation.mutate({ path: `${outboundPath(spaceId, warehouseId)}/${order.id}/allocate`, payload: { reason: form.get('reason') } });
         }}><fieldset disabled={query.data.role === 'VIEWER' || mutation.isPending}>
           <label>预占原因<input name="reason" required maxLength={200} /></label><button>确认全量预占</button>
+        </fieldset></form>}
+        {order.status === 'ALLOCATED' && <form aria-label={`发运 ${order.id}`} onSubmit={(event) => {
+          event.preventDefault(); const form = new FormData(event.currentTarget);
+          mutation.mutate({ path: `${outboundPath(spaceId, warehouseId)}/${order.id}/dispatch`, payload: { reason: form.get('reason') } });
+        }}><fieldset disabled={query.data.role === 'VIEWER' || mutation.isPending}>
+          <p>仅整单全部到齐暂存区后可发运；提交时由服务端重新检查。</p>
+          <label>发运原因<input name="reason" required maxLength={200} /></label><button>确认发运（扣减现存）</button>
         </fieldset></form>}
         {order.allocations.length > 0 && <table aria-label={`分配明细 ${order.id}`}><thead><tr><th>来源货位</th><th>预占（件）</th><th>余额 ID</th></tr></thead>
           <tbody>{order.allocations.map((row) => <tr key={row.id}><td>{row.locationCode}</td><td>{row.quantity}</td><td>{row.balanceId}</td></tr>)}</tbody></table>}

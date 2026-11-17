@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Inject, Inj
 import { createHash, randomUUID } from 'node:crypto';
 import { Prisma } from '@warehouse-twin/database';
 import type { OutboundListResponse, OutboundOrderResponse } from '@warehouse-twin/contracts';
+import { TransportService } from '../transport/transport.service';
 import { DatabaseService } from '../database.service';
 import { objectInput, textInput, uuidInput } from '../auth/input';
 import { lockWarehouseState, appendWarehouseEvent } from '../warehouse-state';
@@ -19,7 +20,8 @@ const view = (order: Order): OutboundOrderResponse => ({
 
 @Injectable()
 export class OutboundService {
-  constructor(@Inject(DatabaseService) private readonly db: DatabaseService) {}
+  constructor(@Inject(DatabaseService) private readonly db: DatabaseService,
+    @Inject(TransportService) private readonly transport: TransportService = new TransportService(db)) {}
   scope(actorId: string, spaceId: string, warehouseId: string): Scope { uuidInput(spaceId); uuidInput(warehouseId); return { actorId, spaceId, warehouseId }; }
   private async access(tx: Prisma.TransactionClient, scope: Scope, write = false) {
     const { actorId: userId, spaceId, warehouseId } = scope;
@@ -88,6 +90,15 @@ export class OutboundService {
   private async audit(tx: Prisma.TransactionClient, scope: Scope, action: string, reason: string, before: Prisma.InputJsonValue, after: OutboundOrderResponse) {
     await tx.auditLog.create({ data: { spaceId: scope.spaceId, warehouseId: scope.warehouseId, actorId: scope.actorId,
       action, reason, requestId: randomUUID(), correlationId: after.id, before, after: after as unknown as Prisma.InputJsonValue } });
+  }
+  async dispatch(scope: Scope, orderId: string, body: unknown) {
+    uuidInput(orderId);
+    const data = objectInput(body, ['key', 'reason']);
+    const key = textInput(data.key, 8, 100), reason = textInput(data.reason, 1, 200);
+    return this.command(scope, 'OUTBOUND_DISPATCH', key, { orderId, reason }, async (tx) => {
+      await this.transport.dispatchInTransaction(tx, scope, orderId, reason);
+      return view(await tx.outboundOrder.findUniqueOrThrow({ where: { id: orderId }, include }));
+    });
   }
   async create(scope: Scope, body: unknown) {
     const data = objectInput(body, ['key', 'skuId', 'batchId', 'quantity', 'reason']);

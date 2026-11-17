@@ -119,7 +119,11 @@ export class TransportService {
 
   dispatch(scope: Scope, orderId: string, reason: string) {
     uuidInput(orderId);
-    return this.command(scope, reason, async (tx, note) => {
+    return this.command(scope, reason, (tx, note) => this.dispatchInTransaction(tx, scope, orderId, note));
+  }
+
+  // Internal composition: caller must hold the shared boundary and write ACL.
+  async dispatchInTransaction(tx: Tx, scope: Scope, orderId: string, note: string) {
       const order = await tx.outboundOrder.findFirst({
         where: { id: orderId, spaceId: scope.spaceId, warehouseId: scope.warehouseId },
         include: { allocations: { include: { task: true }, orderBy: { id: 'asc' } } },
@@ -141,7 +145,6 @@ export class TransportService {
       });
       await this.audit(tx, scope, 'OUTBOUND_DISPATCHED', orderId, note, { status: order.status }, updated);
       return updated;
-    });
   }
 
   private async debit(tx: Tx, { spaceId, warehouseId, skuId, batchId, quantity }: Stock, locationId: string) {
