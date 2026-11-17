@@ -217,6 +217,34 @@ const simulationStateSchema = z.object({
   robot: z.object({ id: z.string().min(1), position: robotCell, direction: z.enum(['N', 'E', 'S', 'W']),
     status: z.enum(['IDLE', 'MOVING', 'DEPLETED']), battery: quantity.max(10000), path: z.array(robotCell).max(65536), next: quantity }),
 });
+const fleetWorkSchema = z.object({ taskId: id, phase: z.enum(['APPROACH', 'LOADING', 'TRANSPORT', 'UNLOADING', 'COMPLETED', 'ERROR']),
+  phaseTicks: quantity, transportPath: z.array(robotCell).min(1).max(65536), error: z.string().nullable() });
+export const fleetEnvelopeSchema = z.object({ format: z.literal(1), from: z.array(robotCell).min(3).max(5), state: z.object({
+  schemaVersion: z.literal(1), tick: quantity,
+  robots: z.array(z.object({ id: z.string().regex(/^robot-[1-5]$/), simulation: simulationStateSchema, work: fleetWorkSchema.nullable(),
+    priority: quantity.max(1000), waitTicks: quantity, totalWaitTicks: quantity,
+    waitReason: z.enum(['OCCUPIED', 'EDGE_SWAP', 'TARGET_CONFLICT']).nullable(), blockerId: z.string().nullable() })).min(3).max(5),
+  assignments: z.array(z.object({ taskId: id, robotId: z.string(), approach: z.array(robotCell).min(1).max(65536), transport: z.array(robotCell).min(1).max(65536) })).max(10000),
+}) });
+export const fleetResponseSchema = z.object({ spaceId: id, warehouseId: id, role: z.enum(['ADMIN', 'OPERATOR', 'VIEWER']),
+  enabled: z.boolean(), tick: quantity, watermark: quantity, epoch: quantity, stateVersion: quantity,
+  layoutId: id.nullable(), layoutVersion: quantity.nullable(),
+  robots: z.array(z.object({ id: z.string(), taskId: id.nullable(), ledgerTaskId: id.nullable(),
+    phase: z.enum(['IDLE', 'APPROACH', 'LOADING', 'TRANSPORT', 'UNLOADING', 'COMPLETED', 'ERROR']),
+    from: robotCell, to: robotCell, battery: quantity.max(10000), carrying: z.boolean(), route: z.array(robotCell).max(65536),
+    waitTicks: quantity, totalWaitTicks: quantity, waitReason: z.enum(['OCCUPIED', 'EDGE_SWAP', 'TARGET_CONFLICT']).nullable(),
+    blockerId: z.string().nullable(), error: z.string().nullable() })).max(5),
+}).superRefine((value, ctx) => {
+  if (value.enabled ? value.robots.length < 3 || !value.layoutId || !value.layoutVersion : value.robots.length !== 0 || value.layoutId !== null) ctx.addIssue({ code: 'custom', message: 'Fleet mode/layout mismatch' });
+  if (new Set(value.robots.map((r) => r.id)).size !== value.robots.length
+    || new Set(value.robots.map((r) => `${r.to.x}:${r.to.z}`)).size !== value.robots.length
+    || new Set(value.robots.filter((r) => r.taskId).map((r) => r.taskId)).size !== value.robots.filter((r) => r.taskId).length) ctx.addIssue({ code: 'custom', message: 'Duplicate fleet identity, cargo or occupancy' });
+  for (const r of value.robots) if (Math.abs(r.from.x - r.to.x) + Math.abs(r.from.z - r.to.z) > 1 || r.totalWaitTicks < r.waitTicks
+    || (r.phase === 'IDLE' ? r.taskId !== null : !r.taskId) || Boolean(r.taskId) !== Boolean(r.ledgerTaskId)
+    || (['IDLE', 'APPROACH', 'LOADING', 'COMPLETED'].includes(r.phase) && r.carrying)
+    || (['TRANSPORT', 'UNLOADING'].includes(r.phase) && !r.carrying)) ctx.addIssue({ code: 'custom', message: 'Invalid confirmed fleet pose/cargo' });
+});
+export type FleetResponse = z.infer<typeof fleetResponseSchema>;
 export const robotCheckpointSchema = z.object({
   format: z.literal(1), actorId: id, taskId: id, kind: z.enum(['OUTBOUND', 'PUTAWAY']).default('OUTBOUND'), inboundOrderId: id.nullable().default(null), allocationId: id.nullable(), stagingId: id, from: robotCell,
   loaded: z.boolean(), error: z.string().max(200).nullable(),

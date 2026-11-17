@@ -87,12 +87,13 @@ export class SimulationService implements OnModuleInit, OnModuleDestroy {
       const run = row ? this.decode(row) : null;
       const allocations = await tx.allocation.findMany({ where: { ...where, order: { status: 'ALLOCATED' },
         OR: [{ task: null }, { task: { phase: 'READY' } }] },
-        include: { balance: { include: { location: true } }, order: { include: { batch: true } } }, orderBy: { id: 'asc' }, take: 100 });
+        include: { task: true, balance: { include: { location: true } }, order: { include: { batch: true } } }, orderBy: { id: 'asc' }, take: 100 });
+      const claimed = new Set((await tx.fleetClaim.findMany({ where: { ...where, active: true }, select: { taskId: true } })).map((c) => c.taskId));
       const receipts = await tx.inboundOrder.findMany({ where: { ...where, status: 'PASSED', putawayTask: null }, include: { batch: true }, orderBy: { id: 'asc' }, take: 100 });
-      return { ...where, putawayReceipts: receipts.map((r) => ({ id: r.id, quantity: r.quantity, label: `${r.batch.code} · ${r.quantity} 件` })),
+      return { ...where, putawayReceipts: receipts.map((r) => ({ id: r.id, quantity: r.quantity, label: `${r.batch.code} · ${r.quantity} 件 · ${r.id.slice(0, 8)}` })),
         storage: access.warehouse.activeLayout!.placements.filter((p) => p.location.kind === 'STORAGE').map((p) => ({ id: p.locationId, code: p.location.code })), role: access.role, runtime: run ? this.snapshot(run) : null,
         watermark: row?.seq ?? 0, epoch: row?.epoch ?? 0, stateVersion: row?.version ?? 0,
-        allocations: allocations.map((a) => ({ id: a.id, quantity: a.quantity, label: `${a.order.batch.code} · ${a.balance.location.code} · ${a.quantity} 件` })),
+        allocations: allocations.filter((a) => !a.task || !claimed.has(a.task.id)).map((a) => ({ id: a.id, quantity: a.quantity, label: `${a.order.batch.code} · ${a.balance.location.code} · ${a.quantity} 件` })),
         staging: access.warehouse.activeLayout!.placements.filter((p) => p.location.kind === 'OUTBOUND').map((p) => ({ id: p.locationId, code: p.location.code })) };
     }, { isolationLevel: 'RepeatableRead' });
   }
@@ -152,7 +153,9 @@ export class SimulationService implements OnModuleInit, OnModuleDestroy {
     const task = createRobotTask(simulation, approach.path, carrying.path);
     return this.db.$transaction(async (tx) => {
       await this.access(scope, true, tx);
-      const row = await lockWarehouseState(tx, scope), current = this.decode(row);
+      const row = await lockWarehouseState(tx, scope);
+      if (row.fleet !== null) throw new ConflictException('仓库已进入多车模式，请使用多车分配');
+      const current = this.decode(row);
       if (current && current.kind === kind && current.allocationId === allocationId && current.inboundOrderId === inboundOrderId) {
         if (current.stagingId !== stagingId || current.task.phase === 'ERROR') throw new ConflictException('任务目标冲突或已停止');
         return this.snapshot(current);

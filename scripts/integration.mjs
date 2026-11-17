@@ -51,7 +51,7 @@ try {
   await run(['scripts/runtime-upgrade-check.mjs'], root, { ...env, UPGRADE_TEST_DATABASE_URL: upgradeDatabaseUrl });
   // Use Node's normal module loader for direct imports of the Nest domain services.
   await run(['--test', '--test-reporter=spec', '--test-reporter-destination=stdout',
-    '--test-reporter=tap', '--test-reporter-destination=reports/integration-transport.tap', 'tests/transport/transport.test.cjs', 'tests/transport/simulation.test.cjs', 'tests/transport/putaway.test.cjs']);
+    '--test-reporter=tap', '--test-reporter-destination=reports/integration-transport.tap', 'tests/transport/transport.test.cjs', 'tests/transport/simulation.test.cjs', 'tests/transport/putaway.test.cjs', 'tests/transport/fleet.test.cjs']);
   await run(['node_modules/jest/bin/jest.js', '--config', 'tests/integration/jest.config.cjs', '--runInBand', '--json', '--outputFile', 'reports/integration-jest.json']);
   // Verify persisted rows after a real database restart, once all HTTP test processes have closed.
   await pg.stop(); await pg.start();
@@ -71,6 +71,11 @@ try {
         const last = await tx.warehouseEvent.findFirst({ where: { warehouseId: row.warehouseId, kind: { in: ['SIM_STARTED', 'SIM_TICK', 'SIM_ERROR'] } }, orderBy: { seq: 'desc' } });
         if (row.checkpoint.task.simulation.tick !== row.tick || !last || last.payload.tick !== row.tick) checkpointMismatches.push(row.warehouseId);
       }
+      const fleets = await tx.warehouseRuntime.findMany({ where: { fleet: { not: database.Prisma.DbNull } } });
+      for (const row of fleets) {
+        const last = await tx.warehouseEvent.findFirst({ where: { warehouseId: row.warehouseId, kind: { in: ['FLEET_INITIALIZED', 'FLEET_ASSIGNED', 'FLEET_TICK', 'FLEET_ERROR'] } }, orderBy: { seq: 'desc' } });
+        if (row.fleet.state.tick !== row.tick || !last || last.payload.tick !== row.tick) checkpointMismatches.push('fleet:' + row.warehouseId);
+      }
       const warehouses = await tx.warehouse.findMany({ include: { activeLayout: true }, orderBy: { id: 'asc' } });
       const samples = [];
       for (const warehouse of warehouses) {
@@ -85,7 +90,7 @@ try {
       }
       return { capturedAt: new Date().toISOString(), databaseRestarted: true,
         consistent: mismatches.length === 0 && reservationMismatches.length === 0 && eventMismatches.length === 0 && checkpointMismatches.length === 0,
-        mismatches, reservationMismatches, eventMismatches, checkpointMismatches, persistedCheckpoints: checkpoints.length, warehouses: samples };
+        mismatches, reservationMismatches, eventMismatches, checkpointMismatches, persistedCheckpoints: checkpoints.length + fleets.length, persistedFleets: fleets.length, warehouses: samples };
     }, { isolationLevel: 'RepeatableRead' });
     results.push({ database: new URL(datasourceUrl).pathname.slice(1), ...evidence });
     if (!evidence.consistent) throw new Error('Post-restart inventory reconciliation failed');

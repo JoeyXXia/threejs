@@ -35,6 +35,7 @@ async function reconcileReservations(tx, scope) {
   return tx.$queryRaw`
     WITH balances AS (SELECT * FROM "InventoryBalance" ${scopeFilter(scope)}),
     locations AS (SELECT * FROM "Location" ${scopeFilter(scope)}),
+    claims AS (SELECT * FROM "FleetClaim" ${scopeFilter(scope)}),
     allocations AS (SELECT * FROM "Allocation" ${scopeFilter(scope)}),
     orders AS (SELECT * FROM "OutboundOrder" ${scopeFilter(scope)}),
     receipts AS (SELECT * FROM "InboundOrder" ${scopeFilter(scope)}),
@@ -82,6 +83,18 @@ async function reconcileReservations(tx, scope) {
       WHERE l.kind IN ('OUTBOUND','STORAGE') GROUP BY l.id,p.capacity
     )
     SELECT * FROM balance_differences
+    UNION ALL
+    SELECT 'FLEET_CLAIM'::text,c.id,'inconsistent'::text,'checkpoint/ledger'::text
+    FROM claims c JOIN "WarehouseRuntime" r ON r."warehouseId"=c."warehouseId"
+    LEFT JOIN "TransportTask" t ON c.kind='OUTBOUND' AND t.id=c."taskId"
+    LEFT JOIN "PutawayTask" pt ON c.kind='PUTAWAY' AND pt.id=c."taskId"
+    WHERE coalesce(t.phase,pt.phase)::text IS DISTINCT FROM CASE WHEN NOT c.active THEN 'STAGED' WHEN c.loaded THEN 'IN_TRANSIT' ELSE 'READY' END
+      OR NOT EXISTS (SELECT 1 FROM jsonb_array_elements(coalesce(r.fleet->'state'->'assignments','[]'::jsonb)) a
+        WHERE a->>'taskId'=c.id::text AND a->>'robotId'=c."robotId")
+      OR (c.active AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(coalesce(r.fleet->'state'->'robots','[]'::jsonb)) b
+        WHERE b->>'id'=c."robotId" AND b->'work'->>'taskId'=c.id::text
+          AND (b->'work'->>'phase'='ERROR' OR (c.loaded AND b->'work'->>'phase' IN ('TRANSPORT','UNLOADING'))
+            OR (NOT c.loaded AND b->'work'->>'phase' IN ('APPROACH','LOADING')))))
     UNION ALL
     SELECT 'ORDER'::text, id, actual::text, (CASE WHEN status='CREATED' THEN 0 ELSE quantity END)::text
     FROM order_totals WHERE actual <> CASE WHEN status='CREATED' THEN 0 ELSE quantity END

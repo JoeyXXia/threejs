@@ -68,9 +68,26 @@ model WarehouseRuntime {
   version Int @default(0)
   seq Int @default(0)
   checkpoint Json?
+    fleet Json?
+    claims FleetClaim[]
   warehouse Warehouse @relation(fields: [spaceId, warehouseId], references: [spaceId, id], onDelete: Restrict)
   events WarehouseEvent[]
   @@unique([spaceId, warehouseId])
+}
+
+model FleetClaim {
+  id String @id @default(uuid()) @db.Uuid
+  spaceId String @db.Uuid
+  warehouseId String @db.Uuid
+  kind String
+  taskId String @db.Uuid
+  robotId String
+  actorId String @db.Uuid
+  loaded Boolean @default(false)
+  active Boolean @default(true)
+  runtime WarehouseRuntime @relation(fields: [spaceId, warehouseId], references: [spaceId, warehouseId], onDelete: Restrict, onUpdate: NoAction)
+  @@unique([warehouseId, kind, taskId])
+  @@index([warehouseId, robotId])
 }
 
 model WarehouseEvent {
