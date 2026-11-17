@@ -157,3 +157,26 @@ npx --no-install --package @playwright/cli playwright-cli -s=warehouse-day20 clo
 ```
 
 回调以测试账户登录，真实 UI 创建 4 件新批次入库单、收货和质检；选择空储位启动上架；创建/分配新批次出库单，验证提前发运 409；软件机器人搬运到暂存，刷新后保持检查点/场景；人工确认发运时让真实后端先提交、再由 Playwright 丢弃响应，随后通过 UI 原参数重试。断言两次发运 key 相同、搬运不扣现存、确认只扣一次、最终仓库对账一致。截图位于 `output/playwright/day-20`，脚本返回实际库存摘要。每轮使用新隔离库，不能把脚本中断后的部分流程当作通过。
+
+## Day 21 单车全链路录像与阶段观测
+
+先顺序运行 `pnpm check`、`pnpm test:unit`、`pnpm test:integration`，等测试集群退出后启动全新 `pnpm qa:browser`。不要使用 `reserve`、`layout-v2` 或手工 SQL 改库存。录像前登录测试管理员、进入 A 仓场景并等 Canvas 就绪，避免录到登录内容。
+
+```powershell
+New-Item -ItemType Directory -Force output/playwright/day-21
+npx --no-install --package @playwright/cli playwright-cli -s=warehouse-day21 open http://127.0.0.1:15174 --browser chrome
+npx --no-install --package @playwright/cli playwright-cli -s=warehouse-day21 resize 1440 1100
+# 按当前快照登录 admin@demo.local / browser-fixture-only-2026，并进入 A 仓场景。
+npx --no-install --package @playwright/cli playwright-cli -s=warehouse-day21 video-start output/playwright/day-21/day-21-demo.webm --size=1440x1100 --fps=25
+npx --no-install --package @playwright/cli playwright-cli -s=warehouse-day21 run-code --filename scripts/browser-checks/day21-single-robot-demo.js
+npx --no-install --package @playwright/cli playwright-cli -s=warehouse-day21 video-stop
+npx --no-install --package @playwright/cli playwright-cli -s=warehouse-day21 run-code --filename scripts/browser-checks/day21-video-check.js
+npx --no-install --package @playwright/cli playwright-cli -s=warehouse-day21 close
+# 向 QA 终端输入 stop，确认环境退出。
+```
+
+主回调必须从仓库场景启动，要求初始现存 62 且无任务。全程通过 UI 操作，运行中的上架/出库各捕获五个 phase，三次 API 读水位相同才接受快照；在途时打开台账展示虚拟货位。最终核对新批次 7 条流水、唯一 DISPATCH、连续事件、同水位 tick、刷新结果与只读对账。返回的相对秒是脚本观测时间，不能直接当视频绝对秒或性能结果。
+
+录像需要完整解码和实际播放后才归档。播放检查脚本的 file URL 对应本工作区，其他克隆路径需修改；抽帧点对应本轮 40.64 秒录像，重录后应按真实内容调整，不能将过场当在途证据。25fps 仅是录像设置。ffmpeg 完整检查命令、SHA-256 和本轮结果见 [Day 21 验收报告](../../reports/day-21-acceptance.md)。重复录制留在本地 output 或新运行副本，不覆盖 reports 中已归档媒体/历史 PDF。
+
+视频暂停和集成测试停止逐 tick 推进用于查货，产品没有暂停 API 或历史回放；录像中 runner 没有被伪造暂停。仅单车，不宣称多车协调。原始 CLI/解码输出与辅助文件留在 output，只有明确的本轮录像和 PNG 进入 reports。
