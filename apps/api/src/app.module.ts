@@ -10,6 +10,7 @@ import { InboundController } from './inbound/inbound.controller';
 import { InboundService } from './inbound/inbound.service';
 import { OutboundController } from './outbound/outbound.controller';
 import { OutboundService } from './outbound/outbound.service';
+import { PutawayService } from './transport/putaway.service';
 import { TransportService } from './transport/transport.service';
 import { CountController } from './count/count.controller';
 import { CountService } from './count/count.service';
@@ -19,6 +20,6 @@ import { SimulationController } from './simulation/simulation.controller';
 
 @Module({
   controllers: [HealthController, AuthController, WarehouseController, InventoryController, InboundController, OutboundController, CountController, WmsController, SimulationController],
-  providers: [DatabaseService, AuthService, AuthGuard, InboundService, OutboundService, TransportService, CountService, SimulationService],
+  providers: [DatabaseService, AuthService, AuthGuard, InboundService, OutboundService, TransportService, PutawayService, CountService, SimulationService],
 })
 export class AppModule {}

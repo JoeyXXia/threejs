@@ -185,13 +185,16 @@ export function validateSnapshot(layout: LayoutResponse, inventory: InventoryRes
 
 const robotCell = z.object({ x: z.number().int().min(0).max(511), z: z.number().int().min(0).max(511) });
 export const robotSnapshotSchema = z.object({
-  taskId: id, allocationId: id, layoutId: id, layoutVersion: z.number().int().positive(),
+  taskId: id, kind: z.enum(['OUTBOUND', 'PUTAWAY']).default('OUTBOUND'), inboundOrderId: id.nullable().default(null), allocationId: id.nullable(), layoutId: id, layoutVersion: z.number().int().positive(),
   phase: z.enum(['APPROACH', 'LOADING', 'TRANSPORT', 'UNLOADING', 'COMPLETED', 'ERROR']),
   tick: quantity, logicalTimeMs: quantity, tickMs: z.literal(250),
   from: robotCell, to: robotCell, direction: z.enum(['N', 'E', 'S', 'W']),
   battery: z.number().int().min(0).max(10000), route: z.array(robotCell).min(1).max(65536),
   carrying: z.boolean(), error: z.string().max(200).nullable(),
 }).superRefine((value, ctx) => {
+  if (value.kind === 'PUTAWAY' ? !value.inboundOrderId || value.allocationId !== null : !value.allocationId || value.inboundOrderId !== null) {
+    ctx.addIssue({ code: 'custom', message: 'Invalid robot task identity' });
+  }
   if (Math.abs(value.from.x - value.to.x) + Math.abs(value.from.z - value.to.z) > 1
     || value.logicalTimeMs !== value.tick * value.tickMs) ctx.addIssue({ code: 'custom', message: 'Invalid confirmed segment' });
 });
@@ -201,6 +204,8 @@ export const simulationResponseSchema = z.object({
   spaceId: id, warehouseId: id, role: z.enum(['ADMIN', 'OPERATOR', 'VIEWER']), runtime: robotSnapshotSchema.nullable(),
   allocations: z.array(z.object({ id, label: z.string(), quantity: z.number().int().positive() })),
   staging: z.array(z.object({ id, code: z.string() })),
+  putawayReceipts: z.array(z.object({ id, label: z.string(), quantity: z.number().int().positive() })).default([]),
+  storage: z.array(z.object({ id, code: z.string() })).default([]),
 });
 export type SimulationResponse = z.infer<typeof simulationResponseSchema>;
 
@@ -213,11 +218,14 @@ const simulationStateSchema = z.object({
     status: z.enum(['IDLE', 'MOVING', 'DEPLETED']), battery: quantity.max(10000), path: z.array(robotCell).max(65536), next: quantity }),
 });
 export const robotCheckpointSchema = z.object({
-  format: z.literal(1), actorId: id, taskId: id, allocationId: id, stagingId: id, from: robotCell,
+  format: z.literal(1), actorId: id, taskId: id, kind: z.enum(['OUTBOUND', 'PUTAWAY']).default('OUTBOUND'), inboundOrderId: id.nullable().default(null), allocationId: id.nullable(), stagingId: id, from: robotCell,
   loaded: z.boolean(), error: z.string().max(200).nullable(),
   task: z.object({ simulation: simulationStateSchema, phase: z.enum(['APPROACH', 'LOADING', 'TRANSPORT', 'UNLOADING', 'COMPLETED', 'ERROR']),
     phaseTicks: quantity, transportPath: z.array(robotCell).min(1).max(65536), error: z.string().nullable() }),
 }).superRefine((value, ctx) => {
+  if (value.kind === 'PUTAWAY' ? !value.inboundOrderId || value.allocationId !== null : !value.allocationId || value.inboundOrderId !== null) {
+    ctx.addIssue({ code: 'custom', message: 'Invalid checkpoint task identity' });
+  }
   const s = value.task.simulation, r = s.robot;
   if (s.logicalTimeMs !== s.tick * s.tickMs || s.map.width * s.map.depth > 65536
     || r.next > r.path.length || (r.status === 'MOVING' && (r.next < 1 || r.next >= r.path.length))) {

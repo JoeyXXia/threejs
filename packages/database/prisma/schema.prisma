@@ -213,6 +213,8 @@ model Location {
   movementsTo InventoryMovement[] @relation("MovementDestination")
   transitTasks TransportTask[] @relation("TransitLocation")
   stagingTasks TransportTask[] @relation("StagingLocation")
+    putawayTransitTasks PutawayTask[] @relation("PutawayTransit")
+    putawayTargetTasks PutawayTask[] @relation("PutawayTarget")
   countOrders CountOrder[]
   inboundOrders InboundOrder[]
   @@unique([spaceId, warehouseId, id])
@@ -382,6 +384,7 @@ model TransportTask {
 
 // One SKU/batch, full receipt and full inspection; no partial operations in Day 8.
 model InboundOrder {
+  putawayTask PutawayTask?
   id String @id @default(uuid()) @db.Uuid
   spaceId String @db.Uuid
   warehouseId String @db.Uuid
@@ -408,6 +411,22 @@ model InboundOrder {
   inspectedBy User? @relation("InboundInspector", fields: [inspectedById], references: [id], onDelete: Restrict, onUpdate: NoAction)
   @@unique([spaceId, warehouseId, id])
   @@index([spaceId, warehouseId, createdAt])
+}
+
+// Day 20: one full released receipt, one storage destination; no partial/cancel flow.
+model PutawayTask {
+  id String @id @default(uuid()) @db.Uuid
+  spaceId String @db.Uuid
+  warehouseId String @db.Uuid
+  inboundOrderId String @unique @db.Uuid
+  transitLocationId String @unique @db.Uuid
+  targetLocationId String @db.Uuid
+  phase TransportPhase @default(READY)
+  receipt InboundOrder @relation(fields: [spaceId, warehouseId, inboundOrderId], references: [spaceId, warehouseId, id], onDelete: Restrict, onUpdate: NoAction)
+  transit Location @relation("PutawayTransit", fields: [spaceId, warehouseId, transitLocationId], references: [spaceId, warehouseId, id], onDelete: Restrict, onUpdate: NoAction)
+  target Location @relation("PutawayTarget", fields: [spaceId, warehouseId, targetLocationId], references: [spaceId, warehouseId, id], onDelete: Restrict, onUpdate: NoAction)
+  @@unique([spaceId, warehouseId, inboundOrderId])
+  @@index([targetLocationId, phase])
 }
 
 // External receipts have no source; dispatches have no destination.

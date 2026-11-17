@@ -4,12 +4,13 @@ import { Prisma, type WarehouseRuntime } from '@warehouse-twin/database';
 import { robotCheckpointSchema, type RobotSnapshot, type SimulationResponse } from '@warehouse-twin/contracts';
 import { createRobotTask, createSimulation, findPath, stepRobotTask, type Cell, type RobotTask } from '@warehouse-twin/simulation';
 import { DatabaseService } from '../database.service';
+import { PutawayService } from '../transport/putaway.service';
 import { TransportService } from '../transport/transport.service';
 import { objectInput, textInput, uuidInput } from '../auth/input';
 import { appendWarehouseEvent, databaseNow, lockWarehouseState } from '../warehouse-state';
 
 type Scope = { actorId: string; spaceId: string; warehouseId: string };
-type Checkpoint = { format: 1; actorId: string; taskId: string; allocationId: string; stagingId: string;
+type Checkpoint = { format: 1; actorId: string; taskId: string; kind: 'OUTBOUND' | 'PUTAWAY'; inboundOrderId: string | null; allocationId: string | null; stagingId: string;
   task: RobotTask; from: Cell; error: string | null; loaded: boolean };
 export type PreparedTick = { scope: Scope; ownerId: string; epoch: number; expectedTick: number; expectedVersion: number;
   checkpoint: Checkpoint; proposal: ReturnType<typeof stepRobotTask> };
@@ -24,7 +25,8 @@ export class SimulationService implements OnModuleInit, OnModuleDestroy {
   private pending: Promise<void> | undefined;
   private stopped = false;
   constructor(@Inject(DatabaseService) private readonly db: DatabaseService,
-    @Inject(TransportService) private readonly transport: TransportService) {}
+    @Inject(TransportService) private readonly transport: TransportService,
+    @Inject(PutawayService) private readonly putaway: PutawayService = new PutawayService()) {}
   onModuleInit() {
     if (!this.timer) this.timer = setInterval(() => { void this.advance().catch(() => { /* DB outage: UI becomes stale; no checkpoint advance. */ }); }, 250);
     this.timer.unref();
@@ -72,7 +74,7 @@ export class SimulationService implements OnModuleInit, OnModuleDestroy {
   }
   private snapshot(run: Checkpoint): RobotSnapshot {
     const { simulation: state, phase } = run.task;
-    return { taskId: run.taskId, allocationId: run.allocationId, layoutId: state.map.layoutId, layoutVersion: state.map.version,
+    return { taskId: run.taskId, kind: run.kind, inboundOrderId: run.inboundOrderId, allocationId: run.allocationId, layoutId: state.map.layoutId, layoutVersion: state.map.version,
       phase, tick: state.tick, logicalTimeMs: state.logicalTimeMs, tickMs: 250,
       from: run.from, to: state.robot.position, direction: state.robot.direction, battery: state.robot.battery,
       route: [...state.robot.path], carrying: run.loaded, error: run.error ?? run.task.error };
@@ -86,7 +88,9 @@ export class SimulationService implements OnModuleInit, OnModuleDestroy {
       const allocations = await tx.allocation.findMany({ where: { ...where, order: { status: 'ALLOCATED' },
         OR: [{ task: null }, { task: { phase: 'READY' } }] },
         include: { balance: { include: { location: true } }, order: { include: { batch: true } } }, orderBy: { id: 'asc' }, take: 100 });
-      return { ...where, role: access.role, runtime: run ? this.snapshot(run) : null,
+      const receipts = await tx.inboundOrder.findMany({ where: { ...where, status: 'PASSED', putawayTask: null }, include: { batch: true }, orderBy: { id: 'asc' }, take: 100 });
+      return { ...where, putawayReceipts: receipts.map((r) => ({ id: r.id, quantity: r.quantity, label: `${r.batch.code} · ${r.quantity} 件` })),
+        storage: access.warehouse.activeLayout!.placements.filter((p) => p.location.kind === 'STORAGE').map((p) => ({ id: p.locationId, code: p.location.code })), role: access.role, runtime: run ? this.snapshot(run) : null,
         watermark: row?.seq ?? 0, epoch: row?.epoch ?? 0, stateVersion: row?.version ?? 0,
         allocations: allocations.map((a) => ({ id: a.id, quantity: a.quantity, label: `${a.order.batch.code} · ${a.balance.location.code} · ${a.quantity} 件` })),
         staging: access.warehouse.activeLayout!.placements.filter((p) => p.location.kind === 'OUTBOUND').map((p) => ({ id: p.locationId, code: p.location.code })) };
@@ -115,18 +119,24 @@ export class SimulationService implements OnModuleInit, OnModuleDestroy {
     } });
   }
   async start(scope: Scope, value: unknown) {
-    const body = objectInput(value, ['allocationId', 'stagingLocationId', 'reason']);
-    const allocationId = uuidInput(body.allocationId), stagingId = uuidInput(body.stagingLocationId);
+    const candidate = objectInput(value, ['kind', 'allocationId', 'stagingLocationId', 'inboundOrderId', 'targetLocationId', 'reason']);
+    const kind = candidate.kind ?? 'OUTBOUND';
+    if (kind !== 'OUTBOUND' && kind !== 'PUTAWAY') throw new BadRequestException('任务类型无效');
+    const body = objectInput(value, kind === 'OUTBOUND' ? ['kind', 'allocationId', 'stagingLocationId', 'reason'] : ['kind', 'inboundOrderId', 'targetLocationId', 'reason']);
+    const allocationId = kind === 'OUTBOUND' ? uuidInput(body.allocationId) : null;
+    const inboundOrderId = kind === 'PUTAWAY' ? uuidInput(body.inboundOrderId) : null;
+    const stagingId = uuidInput(kind === 'OUTBOUND' ? body.stagingLocationId : body.targetLocationId);
     const reason = textInput(body.reason, 1, 200);
     const access = await this.access(scope, true);
     const old = await this.db.warehouseRuntime.findUnique({ where: { warehouseId: scope.warehouseId } });
     const previous = old ? this.decode(old) : null;
     const layout = access.warehouse.activeLayout!;
     // Geometry and A* are outside the write transaction; version is rechecked on commit.
-    const allocation = await this.db.allocation.findFirst({ where: { id: allocationId, spaceId: scope.spaceId, warehouseId: scope.warehouseId }, include: { task: true, order: true } });
-    if (!allocation || allocation.order.status !== 'ALLOCATED') throw new ConflictException('分配不可执行');
-    const source = layout.placements.find((p) => p.locationId === allocation.locationId);
-    const destination = layout.placements.find((p) => p.locationId === stagingId && p.location.kind === 'OUTBOUND');
+    const allocation = allocationId ? await this.db.allocation.findFirst({ where: { id: allocationId, spaceId: scope.spaceId, warehouseId: scope.warehouseId }, include: { task: true, order: true } }) : null;
+    const receipt = inboundOrderId ? await this.db.inboundOrder.findFirst({ where: { id: inboundOrderId, spaceId: scope.spaceId, warehouseId: scope.warehouseId } }) : null;
+    if (kind === 'PUTAWAY' ? receipt?.status !== 'PASSED' : !allocation || allocation.order.status !== 'ALLOCATED') throw new ConflictException('入库单或出库分配不可执行');
+    const source = layout.placements.find((p) => p.locationId === (allocation?.locationId ?? receipt?.qcLocationId));
+    const destination = layout.placements.find((p) => p.locationId === stagingId && p.location.kind === (kind === 'PUTAWAY' ? 'STORAGE' : 'OUTBOUND'));
     if (!source || !destination) throw new ConflictException('取放货位不在当前布局');
     const blocked = layout.racks.flatMap((rack) => Array.from({ length: rack.sizeX * rack.sizeZ }, (_, i) => ({ x: rack.gridX + i % rack.sizeX, z: rack.gridZ + Math.floor(i / rack.sizeX) })));
     const map = { layoutId: layout.id, version: layout.version, width: layout.width, depth: layout.depth, blocked };
@@ -143,7 +153,7 @@ export class SimulationService implements OnModuleInit, OnModuleDestroy {
     return this.db.$transaction(async (tx) => {
       await this.access(scope, true, tx);
       const row = await lockWarehouseState(tx, scope), current = this.decode(row);
-      if (current?.allocationId === allocationId) {
+      if (current && current.kind === kind && current.allocationId === allocationId && current.inboundOrderId === inboundOrderId) {
         if (current.stagingId !== stagingId || current.task.phase === 'ERROR') throw new ConflictException('任务目标冲突或已停止');
         return this.snapshot(current);
       }
@@ -154,9 +164,10 @@ export class SimulationService implements OnModuleInit, OnModuleDestroy {
       if (approach.cost! + carrying.cost! >= simulation.robot.battery) throw new ConflictException('电量不足');
       const owned = await this.lease(tx, row);
       if (!owned) throw new ConflictException('其他 runner 仍持有租约');
-      const ledger = await this.transport.createInTransaction(tx, scope, allocationId, stagingId, reason);
+      const ledger = kind === 'PUTAWAY' ? await this.putaway.createInTransaction(tx, scope, inboundOrderId!, stagingId, reason)
+        : await this.transport.createInTransaction(tx, scope, allocationId!, stagingId, reason);
       if (ledger.phase !== 'READY') throw new ConflictException('运输阶段已变化');
-      const checkpoint: Checkpoint = { format: 1, actorId: scope.actorId, taskId: ledger.id, allocationId, stagingId, task, from: position, error: null, loaded: false };
+      const checkpoint: Checkpoint = { format: 1, actorId: scope.actorId, taskId: ledger.id, kind, inboundOrderId, allocationId, stagingId, task, from: position, error: null, loaded: false };
       await tx.warehouseRuntime.update({ where: { warehouseId: scope.warehouseId }, data: { checkpoint: json(checkpoint) } });
       await appendWarehouseEvent(tx, scope, 'SIM_STARTED', json(this.snapshot(checkpoint)));
       await this.renew(tx, owned);
@@ -200,7 +211,8 @@ export class SimulationService implements OnModuleInit, OnModuleDestroy {
       if (prepared.proposal.task.simulation.tick !== prepared.expectedTick + 1) throw new FenceConflict('下一 tick 不连续');
       const access = await tx.warehouseAccess.findUnique({ where: { userId_spaceId_warehouseId: { userId: scope.actorId, spaceId: scope.spaceId, warehouseId: scope.warehouseId } } });
       const warehouse = await tx.warehouse.findUniqueOrThrow({ where: { id: scope.warehouseId } });
-      const ledger = await tx.transportTask.findUniqueOrThrow({ where: { id: checkpoint.taskId } });
+      const ledger = checkpoint.kind === 'PUTAWAY' ? await tx.putawayTask.findUniqueOrThrow({ where: { id: checkpoint.taskId } })
+        : await tx.transportTask.findUniqueOrThrow({ where: { id: checkpoint.taskId } });
       const expected = checkpoint.loaded ? 'IN_TRANSIT' : 'READY';
       const failure = error ?? (!access || access.role === 'VIEWER' ? '权限已撤销' : warehouse.activeLayoutId !== checkpoint.task.simulation.map.layoutId
         ? '布局已变化' : ledger.phase !== expected ? '账本阶段已变化' : null);
@@ -208,7 +220,7 @@ export class SimulationService implements OnModuleInit, OnModuleDestroy {
         ? { ...checkpoint, task: { ...checkpoint.task, phase: 'ERROR' }, from: checkpoint.task.simulation.robot.position, error: failure }
         : { ...checkpoint, task: prepared.proposal.task, from: checkpoint.task.simulation.robot.position,
           loaded: prepared.proposal.effect ? prepared.proposal.effect === 'take' : checkpoint.loaded };
-      if (!failure && prepared.proposal.effect) await this.transport.moveInTransaction(tx, scope, checkpoint.taskId, prepared.proposal.effect, '软件机器人阶段过账');
+      if (!failure && prepared.proposal.effect) await (checkpoint.kind === 'PUTAWAY' ? this.putaway : this.transport).moveInTransaction(tx, scope, checkpoint.taskId, prepared.proposal.effect, '软件机器人阶段过账');
       await tx.warehouseRuntime.update({ where: { warehouseId: scope.warehouseId }, data: { tick: next.task.simulation.tick, checkpoint: json(next) } });
       await appendWarehouseEvent(tx, scope, failure ? 'SIM_ERROR' : 'SIM_TICK', json(this.snapshot(next)));
       await this.renew(tx, row);

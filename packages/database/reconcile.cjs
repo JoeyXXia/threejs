@@ -37,13 +37,24 @@ async function reconcileReservations(tx, scope) {
     locations AS (SELECT * FROM "Location" ${scopeFilter(scope)}),
     allocations AS (SELECT * FROM "Allocation" ${scopeFilter(scope)}),
     orders AS (SELECT * FROM "OutboundOrder" ${scopeFilter(scope)}),
-    allocated AS (
+    receipts AS (SELECT * FROM "InboundOrder" ${scopeFilter(scope)}),
+    outbound_allocated AS (
       SELECT a."spaceId", a."warehouseId", a."skuId", a."batchId", a.quality,
         CASE t.phase WHEN 'IN_TRANSIT' THEN t."transitLocationId" WHEN 'STAGED' THEN t."stagingLocationId"
           ELSE a."locationId" END AS "locationId", sum(a.quantity)::bigint AS expected
       FROM allocations a JOIN orders o ON o.id=a."orderId"
       LEFT JOIN "TransportTask" t ON t."allocationId"=a.id
       WHERE o.status='ALLOCATED' GROUP BY 1,2,3,4,5,6
+    ), reserved_rows AS (
+      SELECT * FROM outbound_allocated
+      UNION ALL
+      SELECT r."spaceId",r."warehouseId",r."skuId",r."batchId",'RELEASED'::"Quality",
+        CASE WHEN t.phase='READY' THEN r."qcLocationId" ELSE t."transitLocationId" END, r.quantity::bigint
+      FROM "PutawayTask" t JOIN receipts r ON r.id=t."inboundOrderId"
+      WHERE t.phase IN ('READY','IN_TRANSIT')
+    ), allocated AS (
+      SELECT "spaceId","warehouseId","skuId","batchId",quality,"locationId",sum(expected)::bigint AS expected
+      FROM reserved_rows GROUP BY 1,2,3,4,5,6
     ), balance_differences AS (
       SELECT 'BALANCE'::text AS kind, coalesce(b.id,a."locationId") AS id,
         coalesce(b.reserved,0)::text AS actual, coalesce(a.expected,0)::text AS expected
@@ -56,17 +67,19 @@ async function reconcileReservations(tx, scope) {
       LEFT JOIN "TransportTask" t ON t."allocationId"=a.id GROUP BY o.id,o.status,o.quantity
     ), transit_totals AS (
       SELECT l.id, coalesce(sum(b."onHand"),0)::bigint AS actual,
-        CASE WHEN t.phase='IN_TRANSIT' THEN a.quantity ELSE 0 END AS expected
+        CASE WHEN t.phase='IN_TRANSIT' THEN a.quantity WHEN pt.phase='IN_TRANSIT' THEN r.quantity ELSE 0 END AS expected
       FROM locations l LEFT JOIN "TransportTask" t ON t."transitLocationId"=l.id
       LEFT JOIN "Allocation" a ON a.id=t."allocationId"
+      LEFT JOIN "PutawayTask" pt ON pt."transitLocationId"=l.id
+      LEFT JOIN "InboundOrder" r ON r.id=pt."inboundOrderId"
       LEFT JOIN balances b ON b."locationId"=l.id
-      WHERE l.kind='TRANSIT' GROUP BY l.id,t.phase,a.quantity
+      WHERE l.kind='TRANSIT' GROUP BY l.id,t.phase,a.quantity,pt.phase,r.quantity
     ), staging_totals AS (
       SELECT l.id, coalesce(sum(b."onHand"),0)::bigint + staging_reserved(l.id) AS actual, coalesce(p.capacity,0) AS expected
       FROM locations l JOIN "Warehouse" w ON w.id=l."warehouseId"
       LEFT JOIN "LayoutLocation" p ON p."layoutId"=w."activeLayoutId" AND p."locationId"=l.id
       LEFT JOIN balances b ON b."locationId"=l.id
-      WHERE l.kind='OUTBOUND' GROUP BY l.id,p.capacity
+      WHERE l.kind IN ('OUTBOUND','STORAGE') GROUP BY l.id,p.capacity
     )
     SELECT * FROM balance_differences
     UNION ALL

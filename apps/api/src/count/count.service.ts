@@ -138,7 +138,8 @@ export class CountService {
         tx.inventoryBalance.findMany({ where: location, include: { batch: { include: { sku: true } } } }),
       ]);
       if (existing) throw new ConflictException('该货位已有活动盘点');
-      if (task || balances.some((balance) => balance.reserved > 0)) {
+      const incoming = await tx.putawayTask.findFirst({ where: { spaceId, warehouseId, targetLocationId: locationId, phase: { in: ['READY', 'IN_TRANSIT'] } } });
+      if (incoming || task || balances.some((balance) => balance.reserved > 0)) {
         throw new ConflictException('该货位仍有预占或活动运输');
       }
       const order = await tx.countOrder.create({

@@ -33,5 +33,11 @@ try {
   writeFileSync(`${root}/reports/day19-upgrade.json`, JSON.stringify({ capturedAt: new Date().toISOString(),
     unchanged: true, users: before.User.length, warehouses: before.Warehouse.length, balances: before.InventoryBalance.length,
     movements: before.InventoryMovement.length, runtimesBackfilled: rows.length, initialWatermark: 0 }, null, 2));
+  for (const name of migrations.filter((name) => name > target)) await client.query(readFileSync(`${migrationRoot}/${name}/migration.sql`, 'utf8'));
+  assert.deepEqual(await existing(), before, 'later migrations must preserve existing business rows and credentials');
+  writeFileSync(`${root}/reports/day20-upgrade.json`, JSON.stringify({ capturedAt: new Date().toISOString(),
+    unchanged: true, latestMigration: migrations.at(-1), warehouses: before.Warehouse.length,
+    balances: before.InventoryBalance.length, movements: before.InventoryMovement.length,
+    putawayTasks: Number((await client.query('SELECT count(*) FROM "PutawayTask"')).rows[0].count) }, null, 2));
   console.log('PASS: Day 18 schema/seed upgrades without changing business rows or credentials; runtime backfilled at seq 0');
 } finally { await client.end(); }

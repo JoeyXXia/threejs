@@ -2,7 +2,7 @@ import { expect, it } from 'vitest';
 import { robotSnapshotSchema, type RobotSnapshot } from '@warehouse-twin/contracts';
 import { confirmedPose } from './robot-pose';
 
-const snapshot: RobotSnapshot = { taskId: '00000000-0000-4000-8000-000000000001', allocationId: '00000000-0000-4000-8000-000000000002',
+const snapshot: RobotSnapshot = { kind: 'OUTBOUND', inboundOrderId: null, taskId: '00000000-0000-4000-8000-000000000001', allocationId: '00000000-0000-4000-8000-000000000002',
   layoutId: '00000000-0000-4000-8000-000000000003', layoutVersion: 1, phase: 'TRANSPORT', tick: 2, logicalTimeMs: 500,
   tickMs: 250, from: { x: 0, z: 0 }, to: { x: 1, z: 0 }, direction: 'E', battery: 9999,
   route: [{ x: 0, z: 0 }, { x: 1, z: 0 }, { x: 2, z: 0 }], carrying: true, error: null };

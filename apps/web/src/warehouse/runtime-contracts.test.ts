@@ -24,6 +24,16 @@ it('separates the event watermark and owner epoch from the robot tick', () => {
   expect(simulationResponseSchema.safeParse(data).success).toBe(true);
   expect(simulationResponseSchema.safeParse({ ...data, watermark: -1 }).success).toBe(false);
 });
+it('reads legacy outbound checkpoints and separates putaway receipt identity from allocation identity', () => {
+  const old = robotCheckpointSchema.parse(checkpoint());
+  expect(old.kind).toBe('OUTBOUND');
+  expect(old.inboundOrderId).toBeNull();
+  const putaway = { ...checkpoint(), kind: 'PUTAWAY', allocationId: null, inboundOrderId: fixtureId(6) };
+  expect(robotCheckpointSchema.safeParse(putaway).success).toBe(true);
+  expect(robotCheckpointSchema.safeParse({ ...putaway, inboundOrderId: null }).success).toBe(false);
+  expect(robotCheckpointSchema.safeParse({ ...putaway, allocationId: fixtureId(4) }).success).toBe(false);
+  expect(robotCheckpointSchema.safeParse({ ...checkpoint(), kind: 'OUTBOUND', allocationId: null }).success).toBe(false);
+});
 it('requires contiguous ordered events bounded by a committed watermark', () => {
   const data = { spaceId: fixtureId(1), warehouseId: fixtureId(2), after: 3, watermark: 6, hasMore: true,
     events: [{ seq: 4, tick: 2, kind: 'SIM_TICK', payload: {}, createdAt: '2026-11-13T01:00:00.000Z' }] };

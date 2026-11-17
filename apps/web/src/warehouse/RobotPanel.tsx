@@ -9,12 +9,15 @@ export function RobotPanel({ data, error, updatedAt, userId, spaceId, warehouseI
   userId: string; spaceId: string; warehouseId: string; onUnauthorized: () => void;
 }) {
   const client = useQueryClient();
+  const [kind, setKind] = useState<'OUTBOUND' | 'PUTAWAY'>('OUTBOUND');
+  const [inboundOrderId, setReceipt] = useState('');
+  const [targetLocationId, setTarget] = useState('');
   const [allocationId, setAllocation] = useState('');
   const [stagingLocationId, setStaging] = useState('');
   const [now, setNow] = useState(Date.now);
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 500); return () => clearInterval(timer); }, []);
   const start = useMutation({ mutationFn: () => api(`${simulationPath(spaceId, warehouseId)}/start`, 'POST', {
-    allocationId, stagingLocationId, reason: '单车软件模拟搬运',
+    ...(kind === 'PUTAWAY' ? { kind, inboundOrderId, targetLocationId } : { allocationId, stagingLocationId }), reason: '单车软件模拟搬运',
   }), onSuccess: () => client.invalidateQueries({ queryKey: simulationKey(userId, spaceId, warehouseId), exact: true }) });
   useEffect(() => { if (start.error instanceof ApiError && start.error.status === 401) onUnauthorized(); }, [start.error, onUnauthorized]);
   const runtime = data?.runtime;
@@ -34,15 +37,20 @@ export function RobotPanel({ data, error, updatedAt, userId, spaceId, warehouseI
     {start.error && <p role="alert">{start.error.message}</p>}
     <form onSubmit={(event) => { event.preventDefault(); start.mutate(); }}>
       <fieldset disabled={!data || data.role === 'VIEWER' || Boolean(busy) || start.isPending || stale}>
-        <label>运输分配<select value={allocationId} onChange={(event) => setAllocation(event.target.value)} required>
+        <label>任务类型<select value={kind} onChange={(event) => setKind(event.target.value as 'OUTBOUND' | 'PUTAWAY')}><option value="OUTBOUND">出库搬运</option><option value="PUTAWAY">质检放行上架</option></select></label>
+        {kind === 'PUTAWAY' ? <>
+          <label>已放行入库单<select value={inboundOrderId} onChange={(event) => setReceipt(event.target.value)} required><option value="">选择整单</option>{data?.putawayReceipts.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}</select></label>
+          <label>上架储位<select value={targetLocationId} onChange={(event) => setTarget(event.target.value)} required><option value="">选择 STORAGE</option>{data?.storage.map((s) => <option key={s.id} value={s.id}>{s.code}</option>)}</select></label>
+        </> : <><label>运输分配<select value={allocationId} onChange={(event) => setAllocation(event.target.value)} required>
           <option value="">选择已预占分配</option>{data?.allocations.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
         </select></label>
         <label>出库暂存位<select value={stagingLocationId} onChange={(event) => setStaging(event.target.value)} required>
           <option value="">选择暂存位</option>{data?.staging.map((s) => <option key={s.id} value={s.id}>{s.code}</option>)}
-        </select></label><button>启动单车搬运</button>
+        </select></label></>}<button>启动单车搬运</button>
       </fieldset>
     </form>
     {runtime && <p>最后确认位置 ({runtime.to.x}, {runtime.to.z})；路线 {runtime.route.length} 点。任务到达暂存区后不自动发运。</p>}
     {data?.allocations.length === 100 && <p>仅列出前 100 条分配。</p>}
+    {data?.putawayReceipts.length === 100 && <p>仅列出前 100 条待上架入库单；一次整单上架，不拆分或自动选储位。</p>}
   </section>;
 }
