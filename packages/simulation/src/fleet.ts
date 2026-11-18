@@ -1,14 +1,15 @@
 import { createSimulation, type Cell, type SimulationMap, type SimulationState } from './simulation.js';
 import { createRobotTask, stepRobotTask, type RobotTask } from './task.js';
+import { coordinateResources, settledResources, type FleetResource } from './resources.js';
 
-export type WaitReason = 'OCCUPIED' | 'EDGE_SWAP' | 'TARGET_CONFLICT';
+export type WaitReason = 'OCCUPIED' | 'EDGE_SWAP' | 'TARGET_CONFLICT' | 'RESOURCE_BUSY';
 export type MoveProposal = Readonly<{ robotId: string; from: Cell; to: Cell; priority: number; waitTicks: number }>;
-export type MoveDecision = Readonly<{ robotId: string; allowed: boolean; reason: WaitReason | null; blockerId: string | null }>;
+export type MoveDecision = Readonly<{ robotId: string; allowed: boolean; reason: WaitReason | null; blockerId: string | null; resourceId?: string | null }>;
 export type FleetWork = Readonly<Omit<RobotTask, 'simulation'> & { taskId: string }>;
 export type FleetRobot = Readonly<{ id: string; simulation: SimulationState; work: FleetWork | null;
-  priority: number; waitTicks: number; totalWaitTicks: number; waitReason: WaitReason | null; blockerId: string | null }>;
+  priority: number; waitTicks: number; totalWaitTicks: number; waitReason: WaitReason | null; blockerId: string | null; resourceWaitId?: string | null | undefined }>;
 type Assignment = Readonly<{ taskId: string; robotId: string; approach: readonly Cell[]; transport: readonly Cell[] }>;
-export type FleetState = Readonly<{ schemaVersion: 1; tick: number; robots: readonly FleetRobot[]; assignments: readonly Assignment[] }>;
+export type FleetState = Readonly<{ schemaVersion: 1; tick: number; robots: readonly FleetRobot[]; assignments: readonly Assignment[]; resources?: readonly FleetResource[] | undefined }>;
 export type FleetEffect = Readonly<{ robotId: string; taskId: string; stage: 'take' | 'drop'; proposalKey: string }>;
 
 const equal = (a: Cell, b: Cell) => a.x === b.x && a.z === b.z;
@@ -80,7 +81,7 @@ export function assignFleetTask(state: FleetState, robotId: string, taskId: stri
   const assignment = Object.freeze({ taskId, robotId, approach: copied(approach), transport: copied(transport) });
   return Object.freeze({ ...state, assignments: Object.freeze([...state.assignments, assignment]),
     robots: Object.freeze(state.robots.map((r) => r.id === robotId ? Object.freeze({ ...r, simulation: task.simulation,
-      work: work(taskId, task), waitTicks: 0, waitReason: null, blockerId: null }) : r)) });
+      work: work(taskId, task), waitTicks: 0, waitReason: null, blockerId: null, resourceWaitId: null }) : r)) });
 }
 
 function clock(state: SimulationState, tick: number): SimulationState {
@@ -107,21 +108,28 @@ export function stepFleet(state: FleetState): Readonly<{ state: FleetState; effe
     }
     return r.work ? stepRobotTask({ ...r.work, simulation: s }) : { task: null, effect: null };
   });
-  const decisions = coordinateMoves(state.robots.map((r, i) => ({ robotId: r.id, from: r.simulation.robot.position,
-    to: proposals[i]!.task?.simulation.robot.position ?? r.simulation.robot.position, priority: r.priority, waitTicks: r.waitTicks })));
+  const moves = state.robots.map((r, i) => ({ robotId: r.id, from: r.simulation.robot.position,
+    to: proposals[i]!.task?.simulation.robot.position ?? r.simulation.robot.position, priority: r.priority, waitTicks: r.waitTicks }));
+  // Remove unpermitted targets before vertex arbitration: an outside waiter must not
+  // win a target against the existing physical owner and stall its exit forever.
+  const permits = coordinateResources(state, moves, moves.map((p) => ({ robotId: p.robotId, allowed: true, reason: null, blockerId: null })));
+  const permitById = new Map(permits.map((d) => [d.robotId, d]));
+  const physical = coordinateMoves(moves.map((p) => permitById.get(p.robotId)!.allowed ? p : { ...p, to: p.from }));
+  const decisions = physical.map((d) => permitById.get(d.robotId)!.allowed ? d : permitById.get(d.robotId)!);
   const byId = new Map(decisions.map((d) => [d.robotId, d])), tick = state.tick + 1, effects: FleetEffect[] = [];
   const robots = state.robots.map((r, i): FleetRobot => {
     const decision = byId.get(r.id)!, proposal = proposals[i]!;
     if (!decision.allowed) {
       if (!integer(r.waitTicks + 1) || !integer(r.totalWaitTicks + 1)) throw new RangeError('wait counter overflow');
       return Object.freeze({ ...r, simulation: clock(r.simulation, tick), waitTicks: r.waitTicks + 1,
-        totalWaitTicks: r.totalWaitTicks + 1, waitReason: decision.reason, blockerId: decision.blockerId });
+        totalWaitTicks: r.totalWaitTicks + 1, waitReason: decision.reason, blockerId: decision.blockerId, resourceWaitId: decision.resourceId ?? null });
     }
     if (proposal.effect) effects.push(Object.freeze({ robotId: r.id, taskId: r.work!.taskId,
       stage: proposal.effect, proposalKey: `fleet:${r.work!.taskId}:${proposal.effect}` }));
     return Object.freeze({ ...r, simulation: clock(proposal.task?.simulation ?? r.simulation, tick),
-      work: proposal.task ? work(r.work!.taskId, proposal.task) : null, waitTicks: 0, waitReason: null, blockerId: null });
+      work: proposal.task ? work(r.work!.taskId, proposal.task) : null, waitTicks: 0, waitReason: null, blockerId: null, resourceWaitId: null });
   });
-  return Object.freeze({ state: Object.freeze({ ...state, tick, robots: Object.freeze(robots) }),
+  const next = { ...state, tick, robots: Object.freeze(robots) };
+  return Object.freeze({ state: Object.freeze({ ...next, ...(state.resources ? { resources: settledResources(next) } : {}) }),
     effects: Object.freeze(effects), decisions });
 }
