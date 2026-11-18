@@ -42,3 +42,10 @@ it('checks resource occupancy/owners, overlap and historical blocking identity w
   expect(fleetResponseSchema.safeParse({ ...waiting, robots }).success).toBe(true);
   expect(fleetResponseSchema.safeParse({ ...waiting, robots: robots.map((r) => ({ ...r, resourceWaitId: 'unknown' })) }).success).toBe(false);
 });
+it('rejects closed confirmed segments and stale pause alerts while accepting revisioned navigation snapshots', () => {
+  const data = { ...sample(), navigation: { revision: 1, closed: [{ x: 6, z: 1 }] } };
+  expect(fleetResponseSchema.safeParse(data).success).toBe(true);
+  expect(fleetResponseSchema.safeParse({ ...data, navigation: { revision: 1, closed: [{ x: 0, z: 0 }] } }).success).toBe(false);
+  expect(fleetResponseSchema.safeParse({ ...data, navigation: { revision: 1, closed: [{ x: 6, z: 1 }, { x: 6, z: 1 }] } }).success).toBe(false);
+  expect(fleetResponseSchema.safeParse({ ...data, robots: data.robots.map((r) => ({ ...r, navigationIssue: { revision: 0, reason: 'NO_PATH' } })) }).success).toBe(false);
+});

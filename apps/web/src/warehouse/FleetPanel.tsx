@@ -34,6 +34,21 @@ export function FleetPanel({ data, options, error, userId, spaceId, warehouseId,
       <p>仅无活动/异常单车任务时允许切换，保留旧车位置/电量与统一 tick；初始化后不能重置车队。</p>
     </fieldset></form> : <>
       <p data-testid="fleet-status">车数 {data.robots.length} · tick {data.tick} · 水位 {data.watermark} · epoch {data.epoch}</p>
+      <section aria-label="通道封锁与重规划">
+        <h3>封锁 / 解封空闲地面格</h3>
+        <p data-testid="navigation-status">地图 revision {data.navigation.revision} · 封锁 {data.navigation.closed.map((p) => `(${p.x},${p.z})`).join(' ') || '无'}</p>
+        <p>拒绝当前占格及已确认运动段。有界重规划失败则原地暂停，保留任务、货物、资源；修改地图后才重试，不保证无死锁。</p>
+        <form aria-label="修改通道封锁" onSubmit={(event) => {
+          event.preventDefault(); const form = new FormData(event.currentTarget);
+          command.mutate({ path: 'navigation', body: { cells: [{ x: Number(form.get('x')), z: Number(form.get('z')) }], closed: form.get('action') === 'CLOSE', expectedRevision: data.navigation.revision, reason: form.get('reason') } });
+        }}><fieldset disabled={disabled || !!error}>
+          <label>封锁格 X<input name="x" type="number" min="0" max="511" step="1" required /></label>
+          <label>封锁格 Z<input name="z" type="number" min="0" max="511" step="1" required /></label>
+          <label>封锁操作<select name="action"><option value="CLOSE">封锁</option><option value="OPEN">解封</option></select></label>
+          <label>封锁操作原因<input name="reason" required maxLength={200} /></label><button>提交地图变更</button>
+        </fieldset></form>
+        {data.robots.filter((r) => r.navigationIssue).map((r) => <p role="alert" key={r.id}>{r.id} 路径暂停：{r.navigationIssue!.reason} · revision {r.navigationIssue!.revision}。货物与占格保留，禁止沿旧路径继续。</p>)}
+      </section>
       <section aria-label="单容量资源">
         <h3>通道 / 停车 / 充电 / 工作站许可</h3>
         <p>进入前申请，出清后释放；空闲、完成、故障车持续占用。许可不随 runner 租约超时释放，不提供自动充电或无死锁保证。</p>

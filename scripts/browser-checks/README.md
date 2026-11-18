@@ -212,3 +212,19 @@ npx --no-install --package @playwright/cli playwright-cli -s=warehouse-day23 clo
 脚本在登录页使用 QA 测试账户，真实 UI 初始化五车、填写四种资源 JSON、保存并检查空闲车已持有所在许可；经普通授权 API 准备 WMS 单据，UI 分配三台车顺序上架，再分配五个并发出库。观测 RESOURCE_BUSY 的资源/阻挡车及等待 tick；在捕获水位内逐条验证持久 FLEET_TICK 许可与物理占格一一对应，以及原同格/edge swap/保守进入约束。刷新后归属保持；viewer 原生按钮禁用且资源写入 403，跨空间 404。返回的是轮询观测次数，不是吞吐或唯一业务动作数。并发未全部完成属于真实等待，不移走完成车或伪造完成。
 
 截图在 `output/playwright/day-23/day-23-resources.png`；完整回调成功并人工检查后才归档 reports。QA 不能与集成 PostgreSQL 同时运行（共用便携运行时文件），中断的部分结果不计通过。
+
+## Day24 封锁、绕行与暂停
+
+先完成集成测试并等数据库完全退出，再用新 `pnpm qa:browser` 隔离普通 seed 环境，保持该终端 stdin，不输入额外夹具。
+
+```powershell
+New-Item -ItemType Directory -Force output/playwright/day-24
+npx --no-install --package @playwright/cli playwright-cli -s=warehouse-day24 open http://127.0.0.1:15174 --browser chrome
+npx --no-install --package @playwright/cli playwright-cli -s=warehouse-day24 run-code --filename scripts/browser-checks/day24-navigation.js
+npx --no-install --package @playwright/cli playwright-cli -s=warehouse-day24 close
+# QA 输入 stop，确认退出。
+```
+
+从登录页使用 QA 管理员进入 A 仓，UI 初始化三车。普通授权 API 准备出库订单与分配，UI 给 robot-2 领任务、封锁其未来路线格，验证合法绕行；再封锁未占用目标，验证 NO_PATH 告警、至少八 tick 不移位不改货物/归属、刷新持久保留。解封后原任务完成，再清理第一处封锁，共四个 revision。按固定水位检查连续历史、所有持久 tick 不进入封锁格、最终库存与对账，再换 viewer 验证原生禁用和 403，另断言占格/旧 revision 409。UI 409 允许有界重读重试，不修改服务器状态骗过 fence。
+
+截图位于 `output/playwright/day-24/day-24-paused.png` 与 `day-24-completed.png`。只有完整回调成功且人工检查后才归档 reports；载货暂停的确定性正例还由真实库测试覆盖。脚本轮询/截图时刻不是性能测量或整份仓库的原子快照，不声称全局无死锁。

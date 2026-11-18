@@ -2,7 +2,9 @@
 
 WMS 业务驱动的智能仓库数字孪生演示系统。样本为合成数据，库存与流水由 PostgreSQL 持久化，设备为软件模拟。
 
-当前进度为 Day23 单容量通道与工作站资源许可，见 [Day23 验收报告](reports/day-23-acceptance.md) 与 [ADR0014](docs/adr/0014-physical-resource-permits.md)。进入前申请、确认出清后释放，故障/空闲占格不随进程租约过期释放；配置保存后不可重置，不提供自动充电或无死锁保证。
+当前进度为 Day24 受控通道封锁与有界重规划，见 [Day24 验收报告](reports/day-24-acceptance.md) 与 [ADR0015](docs/adr/0015-controlled-closures-and-bounded-replanning.md)。操作员输入空闲格与原因，可封锁/解封；动态 revision 独立于静态布局版本。有路绕行，无路/预算耗尽暂停告警并保留在途货物和资源，只在新地图变化时重试，旧计算不能覆盖新状态。不是 Day25 设备故障恢复，不保证无死锁。
+
+Day23 单容量通道与工作站资源许可，见 [Day23 验收报告](reports/day-23-acceptance.md) 与 [ADR0014](docs/adr/0014-physical-resource-permits.md)。进入前申请、确认出清后释放，故障/空闲占格不随进程租约过期释放；配置保存后不可重置，不提供自动充电或无死锁保证。
 
 Day22 已完成多车分配与保守下一步协调。main 支持显式初始化 3–5 台软件车、持久唯一归属、同事务批次取放和占格/等待展示，见 [Day 22 验收报告](reports/day-22-acceptance.md) 与 [ADR 0013](docs/adr/0013-persistent-fleet-coordination.md)。不保证无死锁，不含 Day 23 通道许可。最新历史阶段标签 `v0.3-single-robot` 仍归档 Day 21，不覆盖旧版本。[40.64 秒完整录像](reports/day-21-demo.webm)、[Day 21 验收报告](reports/day-21-acceptance.md) 与 [v0.3 发布说明](docs/releases/v0.3-single-robot.md) 展示收货、质检、上架、出库搬运、人工发运和 TRANSIT/最终对账。版本以 Git 标签归档，不代表部署、产品级暂停/历史回放或多车避碰。Day 20 已完成整单上架与人工发运。新增质检放行后 QC → TRANSIT → STORAGE 单车搬运，目标容量/批次预留与来源预占同事务建立；上架落货后可用于出库分配。出库页支持整单到齐暂存区后人工确认发运，网络结果不确定时原参数重试不重复扣货。详见 [Day 20 验收报告](reports/day-20-acceptance.md) 和 [ADR 0012](docs/adr/0012-putaway-and-operator-dispatch.md)。Day 19 持久 runner、tick 与事件水位继续复用。PostgreSQL 保存检查点、owner lease、epoch 和提交序号；旧 runner、旧 tick 或旧状态版本不能覆盖已提交状态。入库、出库、盘点、运输及仓库资料写入使用统一仓库/runtime 提交锁，取放、检查点和事件同事务提交。真实 API 停止/重启续跑与限制见 [Day 19 验收报告](reports/day-19-acceptance.md) 和 [持久运行设计](docs/adr/0011-persistent-runtime-and-events.md)。前端仍每 250ms 轮询，仅显示已确认轨迹，尚无 Socket 推送；取放到达暂存区后不自动发运。纯核心与 A* 见 [Day 17](reports/day-17-acceptance.md)、[Day 16](reports/day-16-acceptance.md)，导航网格见 [Day 15](reports/day-15-acceptance.md)。收货、质检、预占、盘点和台账已接入 PostgreSQL。Day 14 阶段演示见 [v0.2-wms 发布说明](docs/releases/v0.2-wms.md)。
 

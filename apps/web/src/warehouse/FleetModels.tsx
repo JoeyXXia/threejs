@@ -20,8 +20,8 @@ export function FleetModels({ fleet, grid }: { fleet: FleetResponse; grid: Layou
     canvas.dataset.fleetPositions = JSON.stringify(positions);
     if (age <= 1600) invalidate();
   });
-  return <>{fleet.robots.map((r, i) => <group key={r.id}>
-    {r.route.length > 1 && <Line points={r.route.map((p) => { const [x, , z] = cellCenter(grid, p.x, p.z); return [x, .06 + i * .01, z] as [number, number, number]; })} color={(['#246c9d', '#8b4db0', '#278562', '#a36b25', '#a13f4f'][i] ?? '#246c9d')} lineWidth={2} />}
+  return <>{fleet.navigation.closed.map((p) => <mesh key={`closed:${p.x}:${p.z}`} position={[grid.origin.x + (p.x + .5) * grid.cellSize, .04, grid.origin.z + (p.z + .5) * grid.cellSize]}><boxGeometry args={[grid.cellSize * .9, .08, grid.cellSize * .9]} /><meshStandardMaterial color="#c43832" wireframe /></mesh>)}{fleet.robots.map((r, i) => <group key={r.id}>
+    {r.route.length > 1 && !r.navigationIssue && <Line points={r.route.map((p) => { const [x, , z] = cellCenter(grid, p.x, p.z); return [x, .06 + i * .01, z] as [number, number, number]; })} color={(['#246c9d', '#8b4db0', '#278562', '#a36b25', '#a13f4f'][i] ?? '#246c9d')} lineWidth={2} />}
     <group ref={(node) => { meshes.current[r.id] = node; }} position={cellCenter(grid, r.from.x, r.from.z)} userData={{ robotId: r.id }}>
       <mesh castShadow><boxGeometry args={[grid.cellSize * .6, .35, grid.cellSize * .7]} /><meshStandardMaterial color={r.phase === 'ERROR' ? '#888888' : r.waitReason ? '#bf7e16' : (['#246c9d', '#8b4db0', '#278562', '#a36b25', '#a13f4f'][i] ?? '#246c9d')} /></mesh>
       <mesh position={[0, .2, .25]}><boxGeometry args={[.14, .08, .12]} /><meshStandardMaterial color="#ffffff" /></mesh>
