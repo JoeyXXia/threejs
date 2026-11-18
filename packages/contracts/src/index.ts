@@ -222,24 +222,31 @@ const fleetWorkSchema = z.object({ taskId: id, phase: z.enum(['APPROACH', 'LOADI
 export const resourceDefinitionSchema = z.object({ id: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
   kind: z.enum(['AISLE', 'PARKING', 'CHARGING', 'WORKSTATION']), cells: z.array(robotCell).min(1).max(128) }).strict();
 const fleetResourceSchema = resourceDefinitionSchema.extend({ ownerId: z.string().nullable() });
+const navigationSchema = z.object({ revision: quantity, closed: z.array(robotCell).max(256) });
+const navigationIssueSchema = z.object({ revision: quantity, reason: z.enum(['NO_PATH', 'BUDGET']) });
 export const fleetEnvelopeSchema = z.object({ format: z.literal(1), from: z.array(robotCell).min(3).max(5), state: z.object({
   schemaVersion: z.literal(1), tick: quantity,
   robots: z.array(z.object({ id: z.string().regex(/^robot-[1-5]$/), simulation: simulationStateSchema, work: fleetWorkSchema.nullable(),
     priority: quantity.max(1000), waitTicks: quantity, totalWaitTicks: quantity,
-    waitReason: z.enum(['OCCUPIED', 'EDGE_SWAP', 'TARGET_CONFLICT', 'RESOURCE_BUSY']).nullable(), blockerId: z.string().nullable(), resourceWaitId: z.string().nullable().optional() })).min(3).max(5),
+    waitReason: z.enum(['OCCUPIED', 'EDGE_SWAP', 'TARGET_CONFLICT', 'RESOURCE_BUSY', 'ROUTE_BLOCKED']).nullable(), blockerId: z.string().nullable(), resourceWaitId: z.string().nullable().optional(), navigationIssue: navigationIssueSchema.nullable().optional() })).min(3).max(5),
   assignments: z.array(z.object({ taskId: id, robotId: z.string(), approach: z.array(robotCell).min(1).max(65536), transport: z.array(robotCell).min(1).max(65536) })).max(10000),
   resources: z.array(fleetResourceSchema).max(32).optional(),
+  navigation: navigationSchema.optional(),
 }) });
 export const fleetResponseSchema = z.object({ spaceId: id, warehouseId: id, role: z.enum(['ADMIN', 'OPERATOR', 'VIEWER']),
   enabled: z.boolean(), tick: quantity, watermark: quantity, epoch: quantity, stateVersion: quantity,
-  layoutId: id.nullable(), layoutVersion: quantity.nullable(), resources: z.array(fleetResourceSchema).max(32).default([]),
+  layoutId: id.nullable(), layoutVersion: quantity.nullable(), resources: z.array(fleetResourceSchema).max(32).default([]), navigation: navigationSchema.default({ revision: 0, closed: [] }),
   robots: z.array(z.object({ id: z.string(), taskId: id.nullable(), ledgerTaskId: id.nullable(),
     phase: z.enum(['IDLE', 'APPROACH', 'LOADING', 'TRANSPORT', 'UNLOADING', 'COMPLETED', 'ERROR']),
     from: robotCell, to: robotCell, battery: quantity.max(10000), carrying: z.boolean(), route: z.array(robotCell).max(65536),
-    waitTicks: quantity, totalWaitTicks: quantity, waitReason: z.enum(['OCCUPIED', 'EDGE_SWAP', 'TARGET_CONFLICT', 'RESOURCE_BUSY']).nullable(),
-    blockerId: z.string().nullable(), resourceWaitId: z.string().nullable().default(null), error: z.string().nullable() })).max(5),
+    waitTicks: quantity, totalWaitTicks: quantity, waitReason: z.enum(['OCCUPIED', 'EDGE_SWAP', 'TARGET_CONFLICT', 'RESOURCE_BUSY', 'ROUTE_BLOCKED']).nullable(),
+    blockerId: z.string().nullable(), resourceWaitId: z.string().nullable().default(null), navigationIssue: navigationIssueSchema.nullable().default(null), error: z.string().nullable() })).max(5),
 }).superRefine((value, ctx) => {
   const resourceIds = new Set<string>(), resourceCells = new Set<string>();
+  if (new Set(value.navigation.closed.map((p) => `${p.x}:${p.z}`)).size !== value.navigation.closed.length
+    || value.navigation.closed.some((p) => value.robots.some((r) => [r.from, r.to].some((c) => c.x === p.x && c.z === p.z)))) ctx.addIssue({ code: 'custom', message: 'Occupied closure' });
+  for (const r of value.robots) if (r.navigationIssue && (r.navigationIssue.revision !== value.navigation.revision
+    || ['IDLE', 'COMPLETED', 'ERROR'].includes(r.phase) || r.waitReason !== 'ROUTE_BLOCKED')) ctx.addIssue({ code: 'custom', message: 'Invalid navigation alert' });
   for (const resource of value.resources) {
     if (resourceIds.has(resource.id)) ctx.addIssue({ code: 'custom', message: 'Duplicate resource' });
     resourceIds.add(resource.id);

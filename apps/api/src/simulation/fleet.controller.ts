@@ -22,4 +22,8 @@ export class FleetController {
   configure(@Req() req: AuthRequest, @Param('spaceId') spaceId: string, @Param('warehouseId') warehouseId: string, @Body() body: unknown) {
     return this.fleet.configure({ actorId: req.identity.userId, spaceId, warehouseId }, body);
   }
+  @Post('navigation')
+  changeMap(@Req() req: AuthRequest, @Param('spaceId') spaceId: string, @Param('warehouseId') warehouseId: string, @Body() body: unknown) {
+    return this.fleet.changeMap({ actorId: req.identity.userId, spaceId, warehouseId }, body);
+  }
 }

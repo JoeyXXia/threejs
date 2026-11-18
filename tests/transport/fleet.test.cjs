@@ -273,3 +273,66 @@ test('corrupted ghost permits fail closed and read-only reconciliation detects t
   } finally { await db.warehouseRuntime.update({ where: { warehouseId: scope.warehouseId }, data: { fleet: row.fleet } }); }
   await reconciled();
 });
+
+// Day24 closures and bounded replanning never mutate warehouse layout or inventory by themselves.
+const mapCommand = (cells, closed, expectedRevision = 0) => ({ cells, closed, expectedRevision, reason: 'Day24 isolated closure test' });
+test('closure commands are scoped, revisioned, idempotent and reject current occupancy or confirmed segments', async () => {
+  const state = await init();
+  await assert.rejects(service.changeMap(viewer, mapCommand([{ x: 0, z: 0 }], true)), { status: 403 });
+  await assert.rejects(service.changeMap({ ...scope, spaceId: ids.spaceB }, mapCommand([{ x: 0, z: 0 }], true)), { status: 404 });
+  await assert.rejects(service.changeMap(scope, { ...mapCommand([{ x: 0, z: 0 }], true), actorId: scope.actorId }), { status: 400 });
+  await assert.rejects(service.changeMap(scope, mapCommand([state.robots[0].to], true)), { status: 409 });
+  const saved = await service.changeMap(scope, mapCommand([{ x: 0, z: 0 }], true));
+  assert.equal(saved.navigation.revision, 1); assert.deepEqual(saved.robots.map((r) => r.to), state.robots.map((r) => r.to));
+  assert.equal((await service.changeMap(scope, mapCommand([{ x: 0, z: 0 }], true, 1))).watermark, saved.watermark);
+  await assert.rejects(service.changeMap(scope, mapCommand([{ x: 0, z: 0 }], false, 0)), { status: 409 });
+  await service.changeMap(scope, mapCommand([{ x: 0, z: 0 }], false, 1));
+  await service.assign(scope, await input()); await service.advance();
+  const moving = await service.read(scope); assert.notDeepEqual(moving.robots[0].from, moving.robots[0].to);
+  await assert.rejects(service.changeMap(scope, mapCommand([moving.robots[0].from], true, 2)), { status: 409 });
+  await reconciled();
+});
+test('closure event failure rolls back the map; carrying NO_PATH pauses retain cargo and reject old proposals, reopening resumes exactly once', async () => {
+  await init(); await service.assign(scope, await input());
+  let state;
+  for (let i = 0; i < 150; i++) { await service.advance(); state = await service.read(scope); if (state.robots[0].carrying) break; }
+  assert.equal(state.robots[0].carrying, true);
+  const endpoint = await db.layoutLocation.findFirstOrThrow({ where: { layoutId: state.layoutId, locationId: staging.id } });
+  const cell = { x: endpoint.serviceX, z: endpoint.serviceZ }, old = await service.prepare(scope.warehouseId), before = await snapshot();
+  await db.$executeRawUnsafe(`CREATE FUNCTION day24_fail_map() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW."warehouseId"='${scope.warehouseId}'::uuid AND NEW.kind='FLEET_NAVIGATION_CHANGED' THEN RAISE EXCEPTION 'injected closure rollback'; END IF; RETURN NEW; END $$`);
+  await db.$executeRawUnsafe('CREATE TRIGGER day24_fail_map BEFORE INSERT ON "WarehouseEvent" FOR EACH ROW EXECUTE FUNCTION day24_fail_map()');
+  try { await assert.rejects(service.changeMap(scope, mapCommand([cell], true))); assert.deepEqual(await snapshot(), before); }
+  finally { await db.$executeRawUnsafe('DROP TRIGGER day24_fail_map ON "WarehouseEvent"'); await db.$executeRawUnsafe('DROP FUNCTION day24_fail_map()'); }
+  state = await service.changeMap(scope, mapCommand([cell], true));
+  assert.equal(state.navigation.revision, 1); assert.equal(state.robots[0].navigationIssue.reason, 'NO_PATH');
+  await assert.rejects(service.commit(old), { status: 409 });
+  const pose = state.robots[0].to, battery = state.robots[0].battery;
+  for (let i = 0; i < 20; i++) await service.advance();
+  state = await service.read(scope); assert.deepEqual(state.robots[0].to, pose); assert.equal(state.robots[0].battery, battery); assert.equal(state.robots[0].carrying, true);
+  assert.equal(await db.fleetClaim.count({ where: { warehouseId: scope.warehouseId, active: true, loaded: true } }), 1);
+  const successor = new FleetService(secondDb);
+  await db.$executeRaw`UPDATE "WarehouseRuntime" SET "leaseUntil"=clock_timestamp()-interval '1 second' WHERE "warehouseId"=${scope.warehouseId}::uuid`;
+  const takeover = await successor.prepare(scope.warehouseId); await successor.commit(takeover);
+  assert.equal((await successor.read(scope)).robots[0].navigationIssue.reason, 'NO_PATH'); await successor.onModuleDestroy();
+  await reconciled();
+  await service.changeMap(scope, mapCommand([cell], false, 1));
+  for (let i = 0; i < 150 && (await service.read(scope)).robots[0].phase !== 'COMPLETED'; i++) await service.advance();
+  assert.equal((await service.read(scope)).robots[0].phase, 'COMPLETED');
+  assert.equal(await db.inventoryMovement.count({ where: { warehouseId: scope.warehouseId, businessKey: { startsWith: 'transport:' } } }), 2);
+  await reconciled();
+});
+test('a real full-width cut pauses before pickup without a fake route, then reopening restores the same claim', async () => {
+  await init(); await service.assign(scope, await input());
+  const row = await db.warehouseRuntime.findUniqueOrThrow({ where: { warehouseId: scope.warehouseId } });
+  const map = row.fleet.state.robots[0].simulation.map;
+  const cut = Array.from({ length: map.width }, (_, x) => ({ x, z: 8 })).filter((p) => !map.blocked.some((b) => b.x === p.x && b.z === p.z));
+  const paused = await service.changeMap(scope, mapCommand(cut, true));
+  assert.equal(paused.robots[0].navigationIssue.reason, 'NO_PATH'); assert.equal(paused.robots[0].carrying, false);
+  for (let i = 0; i < 5; i++) await service.advance();
+  assert.deepEqual((await service.read(scope)).robots[0].to, paused.robots[0].to);
+  assert.equal(await db.inventoryMovement.count({ where: { warehouseId: scope.warehouseId, businessKey: { startsWith: 'transport:' } } }), 0);
+  await reconciled();
+  const resumed = await service.changeMap(scope, mapCommand(cut, false, 1));
+  assert.equal(resumed.robots[0].taskId, paused.robots[0].taskId); assert.equal(resumed.robots[0].navigationIssue, null);
+  await reconciled();
+});

@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Inject, Inj
 import { randomUUID } from 'node:crypto';
 import { Prisma, type WarehouseRuntime } from '@warehouse-twin/database';
 import { fleetEnvelopeSchema, resourceDefinitionSchema, robotCheckpointSchema, type FleetResponse } from '@warehouse-twin/contracts';
-import { assignFleetTask, configureResources, createFleet, findPath, stepFleet, type FleetState, type Cell } from '@warehouse-twin/simulation';
+import { assignFleetTask, changeNavigation, configureResources, createFleet, findPath, navigationOf, stepFleet, type FleetState, type Cell } from '@warehouse-twin/simulation';
 import { DatabaseService } from '../database.service';
 import { TransportService } from '../transport/transport.service';
 import { PutawayService } from '../transport/putaway.service';
@@ -36,6 +36,7 @@ export class FleetService implements OnModuleInit, OnModuleDestroy {
     const e = parsed.data;
     try {
       stepFleet(e.state); // Validation only: proposal is discarded; never advances durable state.
+      if (navigationOf(e.state).closed.some((p) => e.from.some((c) => c.x === p.x && c.z === p.z))) throw new Error('closed confirmed segment');
       for (const [i, r] of e.state.robots.entries()) {
         const s = r.simulation, walls = new Set(s.map.blocked.map((p) => `${p.x}:${p.z}`));
         if (JSON.stringify(s.map) !== JSON.stringify(e.state.robots[0]!.simulation.map) || s.map.width * s.map.depth > 65536
@@ -74,15 +75,39 @@ export class FleetService implements OnModuleInit, OnModuleDestroy {
         watermark: row?.seq ?? 0, epoch: row?.epoch ?? 0, stateVersion: row?.version ?? 0,
         layoutId: e?.state.robots[0]?.simulation.map.layoutId ?? null, layoutVersion: e?.state.robots[0]?.simulation.map.version ?? null,
         resources: (e?.state.resources ?? []).map((r) => ({ ...r, cells: [...r.cells] })),
+        navigation: e ? { ...navigationOf(e.state), closed: [...navigationOf(e.state).closed] } : { revision: 0, closed: [] },
         robots: e?.state.robots.map((r, i) => { const claim = claims.find((c) => c.id === r.work?.taskId);
           if (r.work && (!claim || claim.robotId !== r.id || claim.active === (r.work.phase === 'COMPLETED')
             || (['APPROACH', 'LOADING', 'COMPLETED'].includes(r.work.phase) && claim.loaded)
             || (['TRANSPORT', 'UNLOADING'].includes(r.work.phase) && !claim.loaded))) throw new ConflictException('持久任务归属或载荷与检查点不一致');
           return { id: r.id, taskId: r.work?.taskId ?? null, ledgerTaskId: claim?.taskId ?? null, phase: r.work?.phase ?? 'IDLE',
             from: e.from[i]!, to: r.simulation.robot.position, battery: r.simulation.robot.battery, carrying: claim?.loaded ?? false,
-            route: [...r.simulation.robot.path], waitTicks: r.waitTicks, totalWaitTicks: r.totalWaitTicks,
-            waitReason: r.waitReason, blockerId: r.blockerId, resourceWaitId: r.resourceWaitId ?? null, error: r.work?.error ?? null }; }) ?? [] };
+            route: [...r.simulation.robot.path.slice(Math.max(0, r.simulation.robot.next - 1))], waitTicks: r.waitTicks, totalWaitTicks: r.totalWaitTicks,
+            waitReason: r.waitReason, blockerId: r.blockerId, resourceWaitId: r.resourceWaitId ?? null, navigationIssue: r.navigationIssue ?? null, error: r.work?.error ?? null }; }) ?? [] };
     }, { isolationLevel: 'RepeatableRead' });
+  }
+  async changeMap(scope: Scope, value: unknown) {
+    const body = objectInput(value, ['cells', 'closed', 'expectedRevision', 'reason']), reason = textInput(body.reason, 1, 200);
+    const parsed = resourceDefinitionSchema.shape.cells.max(128).safeParse(body.cells);
+    if (!parsed.success || typeof body.closed !== 'boolean' || !Number.isSafeInteger(body.expectedRevision) || Number(body.expectedRevision) < 0) throw new BadRequestException('封锁命令格式无效');
+    const closed = body.closed;
+    await this.auth(this.db, scope, true);
+    const row = await this.db.warehouseRuntime.findUnique({ where: { warehouseId: scope.warehouseId } }), e = row ? this.decode(row) : null;
+    if (!row || !e) throw new ConflictException('请先初始化车队');
+    // Calculate bounded paths outside the write transaction; tick/version fence rejects stale work.
+    let state: FleetState;
+    try { state = changeNavigation(e.state, parsed.data, closed, Number(body.expectedRevision), e.from); }
+    catch { throw new ConflictException('地图版本过期、格非法或已被车辆/确认运动段占用'); }
+    await this.db.$transaction(async (tx) => {
+      await this.auth(tx, scope, true);
+      const current = await lockWarehouseState(tx, scope), warehouse = await tx.warehouse.findUniqueOrThrow({ where: { id: scope.warehouseId } });
+      if (current.tick !== row.tick || current.version !== row.version || warehouse.activeLayoutId !== e.state.robots[0]!.simulation.map.layoutId) throw new ConflictException('重规划期间状态/布局变化，请重新读取后重试');
+      if (state === e.state) return;
+      await tx.warehouseRuntime.update({ where: { warehouseId: scope.warehouseId }, data: { fleet: json({ ...e, state }) } });
+      await appendWarehouseEvent(tx, scope, 'FLEET_NAVIGATION_CHANGED', { tick: row.tick, actorId: scope.actorId, reason, cells: parsed.data, closed,
+        navigation: navigationOf(state), robots: state.robots.map((r) => ({ id: r.id, issue: r.navigationIssue ?? null })) });
+    }, { timeout: 15000 });
+    return this.read(scope);
   }
   async configure(scope: Scope, value: unknown) {
     const body = objectInput(value, ['resources', 'reason']), reason = textInput(body.reason, 1, 200);
@@ -146,7 +171,7 @@ export class FleetService implements OnModuleInit, OnModuleDestroy {
     if (!item) throw new NotFoundException('来源不可访问');
     const locationId = 'qcLocationId' in item ? item.qcLocationId : item.locationId, layout = a.warehouse.activeLayout!;
     const source = layout.placements.find((p) => p.locationId === locationId), target = layout.placements.find((p) => p.locationId === targetId);
-    const map = robot.simulation.map, walls = new Set(map.blocked.map((p) => `${p.x}:${p.z}`));
+    const map = robot.simulation.map, walls = new Set([...map.blocked, ...navigationOf(e.state).closed].map((p) => `${p.x}:${p.z}`));
     if (!source || !target || map.layoutId !== layout.id) throw new ConflictException('布局或端点已变化');
     // Plan around known parked cells and other tasks' final poses; endpoints may still queue.
     // These are planning obstacles only, not permanent map walls or Day23 resource permits.
@@ -200,7 +225,7 @@ export class FleetService implements OnModuleInit, OnModuleDestroy {
   async commit(p: FleetPrepared, halt = false) {
     return this.db.$transaction(async (tx) => {
       const { row, claims } = await this.fence(tx, p), e = this.decode(row)!;
-      if (p.proposal.state.tick !== p.tick + 1) throw new FleetFenceConflict('多车 tick 不连续');
+      if (p.proposal.state.tick !== p.tick + 1 || navigationOf(p.proposal.state).revision !== navigationOf(e.state).revision) throw new FleetFenceConflict('多车 tick 或地图版本不连续');
       for (const r of e.state.robots) if (r.work && r.work.phase !== 'COMPLETED' && !claims.some((c) => c.id === r.work!.taskId && c.robotId === r.id)) throw new ConflictException('活动任务没有持久归属，停止推进');
       const warehouse = await tx.warehouse.findUniqueOrThrow({ where: { id: p.scope.warehouseId } });
       let failure: string | null = halt ? '批次过账异常，保留占格与在途货物' : null;
@@ -215,7 +240,7 @@ export class FleetService implements OnModuleInit, OnModuleDestroy {
         else if (ledger?.phase !== (c.loaded ? 'IN_TRANSIT' : 'READY')) failure = '账本阶段已变化';
       }
       if (failure) {
-        const state = { ...e.state, robots: e.state.robots.map((r) => r.work && !['COMPLETED', 'ERROR'].includes(r.work.phase) ? { ...r, work: { ...r.work, phase: 'ERROR', error: failure } } : r) };
+        const state = { ...e.state, robots: e.state.robots.map((r) => r.work && !['COMPLETED', 'ERROR'].includes(r.work.phase) ? { ...r, navigationIssue: null, work: { ...r.work, phase: 'ERROR', error: failure } } : r) };
         await tx.warehouseRuntime.update({ where: { warehouseId: p.scope.warehouseId }, data: { fleet: json({ ...e, state, from: state.robots.map((r) => r.simulation.robot.position) }) } });
         await appendWarehouseEvent(tx, p.scope, 'FLEET_ERROR', { tick: row.tick, error: failure });
       } else {
@@ -229,7 +254,8 @@ export class FleetService implements OnModuleInit, OnModuleDestroy {
           fleet: json({ format: 1, state: p.proposal.state, from: e.state.robots.map((r) => r.simulation.robot.position) }) } });
         await appendWarehouseEvent(tx, p.scope, 'FLEET_TICK', { tick: p.proposal.state.tick,
           resources: p.proposal.state.resources ?? [],
-          robots: p.proposal.state.robots.map((r) => ({ id: r.id, cell: r.simulation.robot.position, taskId: r.work?.taskId ?? null, phase: r.work?.phase ?? 'IDLE', waitTicks: r.waitTicks, waitReason: r.waitReason, resourceWaitId: r.resourceWaitId ?? null, blockerId: r.blockerId })) });
+          navigation: navigationOf(p.proposal.state),
+          robots: p.proposal.state.robots.map((r) => ({ id: r.id, cell: r.simulation.robot.position, taskId: r.work?.taskId ?? null, phase: r.work?.phase ?? 'IDLE', waitTicks: r.waitTicks, waitReason: r.waitReason, resourceWaitId: r.resourceWaitId ?? null, blockerId: r.blockerId, navigationIssue: r.navigationIssue ?? null })) });
       }
       const now = await databaseNow(tx);
       if (row.leaseUntil! <= now) throw new FleetFenceConflict('批次执行期间租约已过期');

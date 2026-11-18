@@ -84,6 +84,15 @@ async function reconcileReservations(tx, scope) {
     )
     SELECT * FROM balance_differences
     UNION ALL
+    SELECT 'FLEET_NAVIGATION'::text,rt."warehouseId",'inconsistent'::text,'closed occupancy or stale pause'::text
+    FROM (SELECT * FROM "WarehouseRuntime" ${scopeFilter(scope)}) rt
+    WHERE EXISTS (SELECT 1 FROM jsonb_array_elements(coalesce(rt.fleet->'state'->'navigation'->'closed','[]'::jsonb)) c,
+      jsonb_array_elements(rt.fleet->'state'->'robots') b
+      WHERE c->>'x'=b->'simulation'->'robot'->'position'->>'x' AND c->>'z'=b->'simulation'->'robot'->'position'->>'z')
+      OR EXISTS (SELECT 1 FROM jsonb_array_elements(coalesce(rt.fleet->'state'->'robots','[]'::jsonb)) b
+        WHERE b->'navigationIssue' IS NOT NULL AND b->'navigationIssue'<>'null'::jsonb AND
+          (b->'navigationIssue'->>'revision' IS DISTINCT FROM rt.fleet->'state'->'navigation'->>'revision' OR b->'simulation'->>'paused'<>'true'))
+    UNION ALL
     SELECT 'FLEET_RESOURCE'::text, rt."warehouseId", res->>'id', 'permit/occupancy mismatch'::text
     FROM (SELECT * FROM "WarehouseRuntime" ${scopeFilter(scope)}) rt
     CROSS JOIN LATERAL jsonb_array_elements(coalesce(rt.fleet->'state'->'resources','[]'::jsonb)) res
