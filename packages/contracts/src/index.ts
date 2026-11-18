@@ -219,22 +219,37 @@ const simulationStateSchema = z.object({
 });
 const fleetWorkSchema = z.object({ taskId: id, phase: z.enum(['APPROACH', 'LOADING', 'TRANSPORT', 'UNLOADING', 'COMPLETED', 'ERROR']),
   phaseTicks: quantity, transportPath: z.array(robotCell).min(1).max(65536), error: z.string().nullable() });
+export const resourceDefinitionSchema = z.object({ id: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
+  kind: z.enum(['AISLE', 'PARKING', 'CHARGING', 'WORKSTATION']), cells: z.array(robotCell).min(1).max(128) }).strict();
+const fleetResourceSchema = resourceDefinitionSchema.extend({ ownerId: z.string().nullable() });
 export const fleetEnvelopeSchema = z.object({ format: z.literal(1), from: z.array(robotCell).min(3).max(5), state: z.object({
   schemaVersion: z.literal(1), tick: quantity,
   robots: z.array(z.object({ id: z.string().regex(/^robot-[1-5]$/), simulation: simulationStateSchema, work: fleetWorkSchema.nullable(),
     priority: quantity.max(1000), waitTicks: quantity, totalWaitTicks: quantity,
-    waitReason: z.enum(['OCCUPIED', 'EDGE_SWAP', 'TARGET_CONFLICT']).nullable(), blockerId: z.string().nullable() })).min(3).max(5),
+    waitReason: z.enum(['OCCUPIED', 'EDGE_SWAP', 'TARGET_CONFLICT', 'RESOURCE_BUSY']).nullable(), blockerId: z.string().nullable(), resourceWaitId: z.string().nullable().optional() })).min(3).max(5),
   assignments: z.array(z.object({ taskId: id, robotId: z.string(), approach: z.array(robotCell).min(1).max(65536), transport: z.array(robotCell).min(1).max(65536) })).max(10000),
+  resources: z.array(fleetResourceSchema).max(32).optional(),
 }) });
 export const fleetResponseSchema = z.object({ spaceId: id, warehouseId: id, role: z.enum(['ADMIN', 'OPERATOR', 'VIEWER']),
   enabled: z.boolean(), tick: quantity, watermark: quantity, epoch: quantity, stateVersion: quantity,
-  layoutId: id.nullable(), layoutVersion: quantity.nullable(),
+  layoutId: id.nullable(), layoutVersion: quantity.nullable(), resources: z.array(fleetResourceSchema).max(32).default([]),
   robots: z.array(z.object({ id: z.string(), taskId: id.nullable(), ledgerTaskId: id.nullable(),
     phase: z.enum(['IDLE', 'APPROACH', 'LOADING', 'TRANSPORT', 'UNLOADING', 'COMPLETED', 'ERROR']),
     from: robotCell, to: robotCell, battery: quantity.max(10000), carrying: z.boolean(), route: z.array(robotCell).max(65536),
-    waitTicks: quantity, totalWaitTicks: quantity, waitReason: z.enum(['OCCUPIED', 'EDGE_SWAP', 'TARGET_CONFLICT']).nullable(),
-    blockerId: z.string().nullable(), error: z.string().nullable() })).max(5),
+    waitTicks: quantity, totalWaitTicks: quantity, waitReason: z.enum(['OCCUPIED', 'EDGE_SWAP', 'TARGET_CONFLICT', 'RESOURCE_BUSY']).nullable(),
+    blockerId: z.string().nullable(), resourceWaitId: z.string().nullable().default(null), error: z.string().nullable() })).max(5),
 }).superRefine((value, ctx) => {
+  const resourceIds = new Set<string>(), resourceCells = new Set<string>();
+  for (const resource of value.resources) {
+    if (resourceIds.has(resource.id)) ctx.addIssue({ code: 'custom', message: 'Duplicate resource' });
+    resourceIds.add(resource.id);
+    for (const p of resource.cells) { const key = `${p.x}:${p.z}`; if (resourceCells.has(key)) ctx.addIssue({ code: 'custom', message: 'Overlapping resources' }); resourceCells.add(key); }
+    const occupants = value.robots.filter((r) => resource.cells.some((p) => p.x === r.to.x && p.z === r.to.z));
+    if (occupants.length > 1 || (occupants[0]?.id ?? null) !== resource.ownerId) ctx.addIssue({ code: 'custom', message: 'Permit/occupancy mismatch' });
+  }
+  for (const r of value.robots) if (r.waitReason === 'RESOURCE_BUSY'
+    ? !value.resources.some((p) => p.id === r.resourceWaitId) || !value.robots.some((b) => b.id === r.blockerId && b.id !== r.id)
+    : r.resourceWaitId !== null) ctx.addIssue({ code: 'custom', message: 'Invalid resource wait' });
   if (value.enabled ? value.robots.length < 3 || !value.layoutId || !value.layoutVersion : value.robots.length !== 0 || value.layoutId !== null) ctx.addIssue({ code: 'custom', message: 'Fleet mode/layout mismatch' });
   if (new Set(value.robots.map((r) => r.id)).size !== value.robots.length
     || new Set(value.robots.map((r) => `${r.to.x}:${r.to.z}`)).size !== value.robots.length

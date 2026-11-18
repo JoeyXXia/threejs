@@ -18,4 +18,8 @@ export class FleetController {
   assign(@Req() req: AuthRequest, @Param('spaceId') spaceId: string, @Param('warehouseId') warehouseId: string, @Body() body: unknown) {
     return this.fleet.assign({ actorId: req.identity.userId, spaceId, warehouseId }, body);
   }
+  @Post('resources')
+  configure(@Req() req: AuthRequest, @Param('spaceId') spaceId: string, @Param('warehouseId') warehouseId: string, @Body() body: unknown) {
+    return this.fleet.configure({ actorId: req.identity.userId, spaceId, warehouseId }, body);
+  }
 }

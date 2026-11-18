@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import database from '../packages/database/index.cjs';
 import ledger from '../packages/database/reconcile.cjs';
+import { validateResources } from '../packages/simulation/dist/index.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 // Always create our own cluster/database; never use or reset DATABASE_URL/.env.
@@ -73,7 +74,8 @@ try {
       }
       const fleets = await tx.warehouseRuntime.findMany({ where: { fleet: { not: database.Prisma.DbNull } } });
       for (const row of fleets) {
-        const last = await tx.warehouseEvent.findFirst({ where: { warehouseId: row.warehouseId, kind: { in: ['FLEET_INITIALIZED', 'FLEET_ASSIGNED', 'FLEET_TICK', 'FLEET_ERROR'] } }, orderBy: { seq: 'desc' } });
+        const last = await tx.warehouseEvent.findFirst({ where: { warehouseId: row.warehouseId, kind: { in: ['FLEET_INITIALIZED', 'FLEET_RESOURCES_CONFIGURED', 'FLEET_ASSIGNED', 'FLEET_TICK', 'FLEET_ERROR'] } }, orderBy: { seq: 'desc' } });
+        try { validateResources(row.fleet.state); } catch { checkpointMismatches.push('resource:' + row.warehouseId); }
         if (row.fleet.state.tick !== row.tick || !last || last.payload.tick !== row.tick) checkpointMismatches.push('fleet:' + row.warehouseId);
       }
       const warehouses = await tx.warehouse.findMany({ include: { activeLayout: true }, orderBy: { id: 'asc' } });
@@ -90,7 +92,8 @@ try {
       }
       return { capturedAt: new Date().toISOString(), databaseRestarted: true,
         consistent: mismatches.length === 0 && reservationMismatches.length === 0 && eventMismatches.length === 0 && checkpointMismatches.length === 0,
-        mismatches, reservationMismatches, eventMismatches, checkpointMismatches, persistedCheckpoints: checkpoints.length + fleets.length, persistedFleets: fleets.length, warehouses: samples };
+        mismatches, reservationMismatches, eventMismatches, checkpointMismatches, persistedCheckpoints: checkpoints.length + fleets.length, persistedFleets: fleets.length,
+        fleetsWithResources: fleets.filter((r) => r.fleet.state.resources?.length).length, warehouses: samples };
     }, { isolationLevel: 'RepeatableRead' });
     results.push({ database: new URL(datasourceUrl).pathname.slice(1), ...evidence });
     if (!evidence.consistent) throw new Error('Post-restart inventory reconciliation failed');

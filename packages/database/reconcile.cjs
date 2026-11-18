@@ -84,6 +84,15 @@ async function reconcileReservations(tx, scope) {
     )
     SELECT * FROM balance_differences
     UNION ALL
+    SELECT 'FLEET_RESOURCE'::text, rt."warehouseId", res->>'id', 'permit/occupancy mismatch'::text
+    FROM (SELECT * FROM "WarehouseRuntime" ${scopeFilter(scope)}) rt
+    CROSS JOIN LATERAL jsonb_array_elements(coalesce(rt.fleet->'state'->'resources','[]'::jsonb)) res
+    CROSS JOIN LATERAL (SELECT count(*) AS count, min(b->>'id') AS owner
+      FROM jsonb_array_elements(rt.fleet->'state'->'robots') b
+      WHERE EXISTS (SELECT 1 FROM jsonb_array_elements(res->'cells') c
+        WHERE c->>'x'=b->'simulation'->'robot'->'position'->>'x' AND c->>'z'=b->'simulation'->'robot'->'position'->>'z')) physical
+    WHERE physical.count>1 OR physical.owner IS DISTINCT FROM res->>'ownerId'
+    UNION ALL
     SELECT 'FLEET_CLAIM'::text,c.id,'inconsistent'::text,'checkpoint/ledger'::text
     FROM claims c JOIN "WarehouseRuntime" r ON r."warehouseId"=c."warehouseId"
     LEFT JOIN "TransportTask" t ON c.kind='OUTBOUND' AND t.id=c."taskId"

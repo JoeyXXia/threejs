@@ -193,3 +193,83 @@ test('revocation after pickup stops the batch while retaining physical transit c
   assert.equal(await db.fleetClaim.count({ where: { warehouseId: scope.warehouseId, active: true, loaded: true } }), 1);
   await reconciled();
 });
+
+// Day23: physical permits share the persisted fleet checkpoint and warehouse fence.
+const resourceCommand = (resources) => ({ resources, reason: 'Day23 isolated resource configuration' });
+test('resource configuration is scoped, validated, idempotent, single-capacity and cannot reset existing permits', async () => {
+  const state = await init();
+  const resources = [
+    { id: 'park', kind: 'PARKING', cells: [state.robots[0].to] },
+    { id: 'charger', kind: 'CHARGING', cells: [state.robots[1].to] },
+    { id: 'work', kind: 'WORKSTATION', cells: [{ x: 27, z: 3 }] },
+    { id: 'aisle', kind: 'AISLE', cells: [{ x: 0, z: 0 }, { x: 1, z: 0 }] },
+  ];
+  await assert.rejects(service.configure(viewer, resourceCommand(resources)), { status: 403 });
+  await assert.rejects(service.configure({ ...scope, spaceId: ids.spaceB }, resourceCommand(resources)), { status: 404 });
+  await assert.rejects(service.configure(scope, { ...resourceCommand(resources), actorId: scope.actorId }), { status: 400 });
+  await assert.rejects(service.configure(scope, resourceCommand([{ ...resources[0], cells: [{ x: 999, z: 0 }] }])), { status: 400 });
+  await assert.rejects(service.configure(scope, resourceCommand([{ ...resources[0], cells: [{ x: 500, z: 0 }] }])), { status: 409 });
+  await assert.rejects(service.configure(scope, resourceCommand([resources[0], { ...resources[0], id: 'duplicate' }])), { status: 409 });
+  const result = await service.configure(scope, resourceCommand(resources));
+  assert.equal(result.resources.length, 4); assert.equal(result.resources.find((r) => r.id === 'park').ownerId, 'robot-1');
+  const seq = result.watermark;
+  assert.equal((await other.configure(scope, resourceCommand([...resources].reverse()))).watermark, seq);
+  await assert.rejects(service.configure(scope, resourceCommand([resources[0]])), { status: 409 });
+  assert.deepEqual((await other.read(scope)).resources, result.resources);
+  await reconciled();
+});
+test('permit and position/event roll back together; expired runner lease cannot release a faulted car in the corridor', async () => {
+  const successor = new FleetService(secondDb); // Day22 deliberately destroyed `other`; use a live new runner.
+  await init(); const body = await input();
+  const row = await db.warehouseRuntime.findUniqueOrThrow({ where: { warehouseId: scope.warehouseId } });
+  const state = row.fleet.state, start = state.robots[0].simulation.robot.position, map = state.robots[0].simulation.map;
+  const allocation = await db.allocation.findUniqueOrThrow({ where: { id: body.allocationId } });
+  const placement = await db.layoutLocation.findFirstOrThrow({ where: { layoutId: map.layoutId, locationId: allocation.locationId } });
+  const { findPath } = await import('../../packages/simulation/dist/index.js');
+  const route = findPath({ ...map, walkable: (p) => p.x >= 0 && p.z >= 0 && p.x < map.width && p.z < map.depth && !map.blocked.some((b) => b.x === p.x && b.z === p.z) }, start, { x: placement.serviceX, z: placement.serviceZ });
+  assert.equal(route.status, 'found'); assert.ok(route.path.length > 2);
+  await service.configure(scope, resourceCommand([{ id: 'corridor', kind: 'AISLE', cells: route.path.slice(0, 2) }]));
+  await service.assign(scope, body);
+  const prepared = await service.prepare(scope.warehouseId), before = await snapshot();
+  await db.$executeRawUnsafe(`CREATE FUNCTION day23_fail_batch() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW."warehouseId"='${scope.warehouseId}'::uuid AND NEW.kind='FLEET_TICK' THEN RAISE EXCEPTION 'injected resource rollback'; END IF; RETURN NEW; END $$`);
+  await db.$executeRawUnsafe('CREATE TRIGGER day23_fail_batch BEFORE INSERT ON "WarehouseEvent" FOR EACH ROW EXECUTE FUNCTION day23_fail_batch()');
+  try { await assert.rejects(service.commit(prepared)); assert.deepEqual(await snapshot(), before); }
+  finally { await db.$executeRawUnsafe('DROP TRIGGER day23_fail_batch ON "WarehouseEvent"'); await db.$executeRawUnsafe('DROP FUNCTION day23_fail_batch()'); }
+  await db.$executeRaw`UPDATE "WarehouseRuntime" SET "leaseUntil"=clock_timestamp()-interval '1 second' WHERE "warehouseId"=${scope.warehouseId}::uuid`;
+  assert.equal((await successor.read(scope)).resources[0].ownerId, 'robot-1');
+  const takeover = await successor.prepare(scope.warehouseId); assert.ok(takeover.epoch > prepared.epoch);
+  await successor.commit(takeover); await assert.rejects(service.commit(prepared), { status: 409 });
+  assert.equal((await successor.read(scope)).resources[0].ownerId, 'robot-1');
+  await db.warehouseAccess.update({ where: { userId_spaceId_warehouseId: { userId: scope.actorId, spaceId: scope.spaceId, warehouseId: scope.warehouseId } }, data: { role: 'VIEWER' } });
+  await successor.advance(); const fault = await successor.read(scope);
+  assert.equal(fault.robots[0].phase, 'ERROR'); assert.equal(fault.resources[0].ownerId, 'robot-1');
+  for (let i = 0; i < 10; i++) await successor.advance();
+  assert.deepEqual((await successor.read(scope)).resources, fault.resources); await reconciled();
+  await successor.onModuleDestroy();
+});
+test('actual departure releases parking but completed endpoint keeps its workstation permit and reconciled stock', async () => {
+  const state = await init();
+  const placement = await db.layoutLocation.findFirstOrThrow({ where: { layoutId: state.layoutId, locationId: staging.id } });
+  await service.configure(scope, resourceCommand([{ id: 'park', kind: 'PARKING', cells: [state.robots[0].to] },
+    { id: 'station', kind: 'WORKSTATION', cells: [{ x: placement.serviceX, z: placement.serviceZ }] }]));
+  await service.assign(scope, await input());
+  for (let i = 0; i < 150 && (await service.read(scope)).robots[0].phase !== 'COMPLETED'; i++) await service.advance();
+  const completed = await service.read(scope); assert.equal(completed.robots[0].phase, 'COMPLETED');
+  assert.equal(completed.resources.find((r) => r.id === 'park').ownerId, null);
+  assert.equal(completed.resources.find((r) => r.id === 'station').ownerId, 'robot-1');
+  assert.equal(await other.prepare(scope.warehouseId), null);
+  assert.equal((await other.read(scope)).resources.find((r) => r.id === 'station').ownerId, 'robot-1');
+  await reconciled();
+});
+test('corrupted ghost permits fail closed and read-only reconciliation detects their mismatch', async () => {
+  const state = await init(); await service.configure(scope, resourceCommand([{ id: 'park', kind: 'PARKING', cells: [state.robots[0].to] }]));
+  const row = await db.warehouseRuntime.findUniqueOrThrow({ where: { warehouseId: scope.warehouseId } });
+  const bad = JSON.parse(JSON.stringify(row.fleet)); bad.state.resources[0].ownerId = 'robot-2';
+  await db.warehouseRuntime.update({ where: { warehouseId: scope.warehouseId }, data: { fleet: bad } }); // Deliberate corruption fixture only.
+  try {
+    await assert.rejects(service.read(scope), { status: 409 });
+    const result = await db.$transaction((tx) => reconcileWarehouse(tx, scope));
+    assert.equal(result.consistent, false); assert.ok(result.reservationMismatches.some((r) => r.kind === 'FLEET_RESOURCE' || Object.values(r).includes('FLEET_RESOURCE')));
+  } finally { await db.warehouseRuntime.update({ where: { warehouseId: scope.warehouseId }, data: { fleet: row.fleet } }); }
+  await reconciled();
+});
