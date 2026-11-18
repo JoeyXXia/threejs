@@ -19,6 +19,7 @@ export function FleetPanel({ data, options, error, userId, spaceId, warehouseId,
   const active = data?.robots.some((r) => !['IDLE', 'COMPLETED', 'ERROR'].includes(r.phase));
   const stale = !!error || (active && now - advanced.current > 1500);
   const disabled = !data || data.role === 'VIEWER' || command.isPending;
+  const [configurationError, setConfigurationError] = useState<string | null>(null);
   return <section className="robot-panel" aria-label="多车协调">
     <h2>多车分配与集中下一步协调</h2>
     <p>3–5 台软件车；保守禁止进入其他车本 tick 起始占格。可能真实等待或死锁，不宣称无死锁或工业避碰。</p>
@@ -33,9 +34,25 @@ export function FleetPanel({ data, options, error, userId, spaceId, warehouseId,
       <p>仅无活动/异常单车任务时允许切换，保留旧车位置/电量与统一 tick；初始化后不能重置车队。</p>
     </fieldset></form> : <>
       <p data-testid="fleet-status">车数 {data.robots.length} · tick {data.tick} · 水位 {data.watermark} · epoch {data.epoch}</p>
+      <section aria-label="单容量资源">
+        <h3>通道 / 停车 / 充电 / 工作站许可</h3>
+        <p>进入前申请，出清后释放；空闲、完成、故障车持续占用。许可不随 runner 租约超时释放，不提供自动充电或无死锁保证。</p>
+        {data.resources.length ? <table aria-label="资源许可"><thead><tr><th>资源</th><th>类型 / 容量</th><th>占用车</th><th>格集合</th></tr></thead><tbody>
+          {data.resources.map((r) => <tr key={r.id}><td>{r.id}</td><td>{r.kind} / 1</td><td>{r.ownerId ?? '空闲'}</td><td>{r.cells.map((p) => `(${p.x},${p.z})`).join(' ')}</td></tr>)}
+        </tbody></table> : <form aria-label="配置单容量资源" onSubmit={(event) => {
+          event.preventDefault(); const form = new FormData(event.currentTarget);
+          try { const resources: unknown = JSON.parse(String(form.get('resources'))); setConfigurationError(null); command.mutate({ path: 'resources', body: { resources, reason: form.get('reason') } }); }
+          catch { setConfigurationError('请填写合法 JSON 资源数组'); }
+        }}><fieldset disabled={disabled || !!error || active}>
+          <label>资源 JSON<textarea name="resources" required rows={5} placeholder={'[{"id":"aisle-a","kind":"AISLE","cells":[{"x":3,"z":3}]}]'} /></label>
+          <label>资源配置原因<input name="reason" required maxLength={200} /></label><button>保存单容量资源</button>
+          <p>按地面网格配置连通且不重叠的可走格，每组最多 128 格、共最多 32 组。已有车会取得所在资源；一组已有多车则拒绝。首次无活动任务时配置，保存后不能重置。</p>
+        </fieldset></form>}
+        {configurationError && <p role="alert">{configurationError}</p>}
+      </section>
       <table aria-label="车队状态"><thead><tr><th>车辆</th><th>阶段/货物</th><th>位置</th><th>等待</th><th>任务归属</th></tr></thead><tbody>
         {data.robots.map((r) => <tr key={r.id}><td>{r.id}</td><td>{r.phase} · {r.carrying ? '载货' : '空载'} · {(r.battery / 100).toFixed(2)}%</td>
-          <td>({r.to.x}, {r.to.z})</td><td>{r.waitReason ?? '无'} {r.blockerId ?? ''} · 连续 {r.waitTicks} / 累计 {r.totalWaitTicks} tick</td>
+          <td>({r.to.x}, {r.to.z})</td><td>{r.waitReason ?? '无'} {r.resourceWaitId ?? ''} {r.blockerId ?? ''} · 连续 {r.waitTicks} / 累计 {r.totalWaitTicks} tick</td>
           <td>{r.taskId ?? '未分配'}<br />{r.ledgerTaskId ?? ''}{r.error && <strong role="alert">{r.error}</strong>}</td></tr>)}</tbody></table>
       <form aria-label="分配多车任务" onSubmit={(event) => {
         event.preventDefault(); const form = new FormData(event.currentTarget);

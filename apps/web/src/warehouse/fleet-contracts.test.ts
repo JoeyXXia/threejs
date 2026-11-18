@@ -32,3 +32,13 @@ it('isolates fleet caches by authenticated user, space and warehouse', () => {
   expect(fleetKey('u1', 's1', 'w1')).not.toEqual(fleetKey('u1', 's2', 'w1'));
   expect(fleetKey('u1', 's1', 'w1')).not.toEqual(fleetKey('u1', 's1', 'w2'));
 });
+it('checks resource occupancy/owners, overlap and historical blocking identity without requiring a current owner', () => {
+  const data = { ...sample(), resources: [{ id: 'park', kind: 'PARKING', cells: [{ x: 0, z: 0 }], ownerId: 'robot-1' }] };
+  expect(fleetResponseSchema.safeParse(data).success).toBe(true);
+  expect(fleetResponseSchema.safeParse({ ...data, resources: [{ ...data.resources[0], ownerId: null }] }).success).toBe(false);
+  expect(fleetResponseSchema.safeParse({ ...data, resources: [...data.resources, ...data.resources] }).success).toBe(false);
+  const waiting = { ...sample(), resources: [{ id: 'aisle', kind: 'AISLE', cells: [{ x: 6, z: 0 }], ownerId: null }] };
+  const robots = waiting.robots.map((r, i) => i === 1 ? { ...r, waitReason: 'RESOURCE_BUSY', resourceWaitId: 'aisle', blockerId: 'robot-1' } : r);
+  expect(fleetResponseSchema.safeParse({ ...waiting, robots }).success).toBe(true);
+  expect(fleetResponseSchema.safeParse({ ...waiting, robots: robots.map((r) => ({ ...r, resourceWaitId: 'unknown' })) }).success).toBe(false);
+});

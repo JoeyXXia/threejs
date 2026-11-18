@@ -196,3 +196,19 @@ npx --no-install --package @playwright/cli playwright-cli -s=warehouse-day22 clo
 脚本从登录页启动，用 QA 测试管理员进入 A 仓；UI 初始化五车、选择车辆并分配。入库/出库准备夹具使用当前账户真实授权 API（非 SQL），三台不同车辆顺序完成 QC 上架，再给五车各分配一个出库任务，观察至少 70 tick 的冲突等待。断言刷新后归属不变、库存 65/预占 5、对账一致，并逐条检查捕获水位之前的持久 FLEET_TICK，不允许同格、进入他车原占格或 edge swap。最后换 viewer 验证原生提交按钮 disabled、写入 403、跨空间 404。
 
 返回的 carrying/wait 数量是轮询观测次数，不是唯一动作数或性能指标。五个并发出库任务不保证全部完成，共享暂存点/完成停车可造成真实等待；不自动挪车、重置或改库存来制造完成。截图写入 `output/playwright/day-22/day-22-fleet.png`，完整脚本成功且人工检查后才复制到 reports。单次中断或仅截图成功不算整体验收通过。
+
+## Day23 单容量资源
+
+用新 `pnpm qa:browser` 隔离环境，等待 PostgreSQL 集成集群退出后启动，不执行额外夹具命令。
+
+```powershell
+New-Item -ItemType Directory -Force output/playwright/day-23
+npx --no-install --package @playwright/cli playwright-cli -s=warehouse-day23 open http://127.0.0.1:15174 --browser chrome
+npx --no-install --package @playwright/cli playwright-cli -s=warehouse-day23 run-code --filename scripts/browser-checks/day23-resources.js
+npx --no-install --package @playwright/cli playwright-cli -s=warehouse-day23 close
+# QA 终端输入 stop，等待退出。
+```
+
+脚本在登录页使用 QA 测试账户，真实 UI 初始化五车、填写四种资源 JSON、保存并检查空闲车已持有所在许可；经普通授权 API 准备 WMS 单据，UI 分配三台车顺序上架，再分配五个并发出库。观测 RESOURCE_BUSY 的资源/阻挡车及等待 tick；在捕获水位内逐条验证持久 FLEET_TICK 许可与物理占格一一对应，以及原同格/edge swap/保守进入约束。刷新后归属保持；viewer 原生按钮禁用且资源写入 403，跨空间 404。返回的是轮询观测次数，不是吞吐或唯一业务动作数。并发未全部完成属于真实等待，不移走完成车或伪造完成。
+
+截图在 `output/playwright/day-23/day-23-resources.png`；完整回调成功并人工检查后才归档 reports。QA 不能与集成 PostgreSQL 同时运行（共用便携运行时文件），中断的部分结果不计通过。
