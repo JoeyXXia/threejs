@@ -49,3 +49,10 @@ it('rejects closed confirmed segments and stale pause alerts while accepting rev
   expect(fleetResponseSchema.safeParse({ ...data, navigation: { revision: 1, closed: [{ x: 6, z: 1 }, { x: 6, z: 1 }] } }).success).toBe(false);
   expect(fleetResponseSchema.safeParse({ ...data, robots: data.robots.map((r) => ({ ...r, navigationIssue: { revision: 0, reason: 'NO_PATH' } })) }).success).toBe(false);
 });
+it('keeps device recovery status consistent with cargo and rejects future fault ticks', () => {
+  const original = sample();
+  const data = { ...original, robots: original.robots.map((r, i) => i ? r : { ...r, deviceFault: { reason: 'fault', sinceTick: 0 }, waitReason: 'DEVICE_FAULT', recoveryStatus: 'PAUSED' }) };
+  expect(fleetResponseSchema.safeParse(data).success).toBe(true);
+  expect(fleetResponseSchema.safeParse({ ...data, robots: data.robots.map((r) => ({ ...r, recoveryStatus: 'NEEDS_RECOVERY' })) }).success).toBe(false);
+  expect(fleetResponseSchema.safeParse({ ...data, robots: data.robots.map((r) => ({ ...r, deviceFault: { reason: 'fault', sinceTick: 1 } })) }).success).toBe(false);
+});

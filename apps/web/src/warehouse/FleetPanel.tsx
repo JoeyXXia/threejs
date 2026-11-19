@@ -34,6 +34,21 @@ export function FleetPanel({ data, options, error, userId, spaceId, warehouseId,
       <p>仅无活动/异常单车任务时允许切换，保留旧车位置/电量与统一 tick；初始化后不能重置车队。</p>
     </fieldset></form> : <>
       <p data-testid="fleet-status">车数 {data.robots.length} · tick {data.tick} · 水位 {data.watermark} · epoch {data.epoch}</p>
+      <section aria-label="设备故障与恢复">
+        <h3>步边界故障 / 原任务恢复</h3>
+        <p>仅软件故障演示。故障保留位置、货物、目标容量和通道许可；载货后禁止取消。取消的是未取货运输，不撤销历史出库分配单，已取消来源不能重新领取。</p>
+        {data.robots.map((r) => <form className="robot-control" key={r.id} aria-label={`${r.id} 故障恢复`} onSubmit={(event) => {
+          event.preventDefault(); const form = new FormData(event.currentTarget), action = (event.nativeEvent as SubmitEvent).submitter?.getAttribute('value');
+          if (action) command.mutate({ path: 'control', body: { robotId: r.id, expectedTaskId: r.taskId, action, reason: form.get('reason') } });
+        }}><fieldset disabled={disabled || !!error}>
+          <legend>{r.id} · {r.recoveryStatus ?? '无设备故障'}</legend>
+          {r.deviceFault && <p role="alert">{r.recoveryStatus} · {r.deviceFault.reason} · tick {r.deviceFault.sinceTick} 起暂停；货物和物理占格未释放。</p>}
+          <label>{r.id} 操作原因<input name="reason" required maxLength={200} /></label>
+          <button value="FAULT" disabled={!!r.deviceFault || !r.taskId || ['ERROR', 'COMPLETED'].includes(r.phase)}>注入故障</button>
+          <button value="REPAIR" disabled={!r.deviceFault || r.phase === 'ERROR'}>维修继续</button>
+          <button value="CANCEL" disabled={r.carrying || !['APPROACH', 'LOADING'].includes(r.phase)}>取消未取货运输</button>
+        </fieldset></form>)}
+      </section>
       <section aria-label="通道封锁与重规划">
         <h3>封锁 / 解封空闲地面格</h3>
         <p data-testid="navigation-status">地图 revision {data.navigation.revision} · 封锁 {data.navigation.closed.map((p) => `(${p.x},${p.z})`).join(' ') || '无'}</p>

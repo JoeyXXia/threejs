@@ -2,7 +2,9 @@
 
 WMS 业务驱动的智能仓库数字孪生演示系统。样本为合成数据，库存与流水由 PostgreSQL 持久化，设备为软件模拟。
 
-当前进度为 Day24 受控通道封锁与有界重规划，见 [Day24 验收报告](reports/day-24-acceptance.md) 与 [ADR0015](docs/adr/0015-controlled-closures-and-bounded-replanning.md)。操作员输入空闲格与原因，可封锁/解封；动态 revision 独立于静态布局版本。有路绕行，无路/预算耗尽暂停告警并保留在途货物和资源，只在新地图变化时重试，旧计算不能覆盖新状态。不是 Day25 设备故障恢复，不保证无死锁。
+Day25 新增步边界设备故障、原任务维修与取货前运输取消，见 [Day25 验收报告](reports/day-25-acceptance.md) 与 [ADR0016](docs/adr/0016-phase-preserving-device-recovery.md)。载货故障显示 NEEDS_RECOVERY，保留TRANSIT/容量/通道许可；维修不重开取放，载货取消409。取货前取消释放业务预占但不挪车、不清设备故障；取消运输保留终态历史，不是出库整单取消/重开，已取消来源不可重新领取。不含 Day26 充电或真实设备控制。
+
+Day24 受控通道封锁与有界重规划，见 [Day24 验收报告](reports/day-24-acceptance.md) 与 [ADR0015](docs/adr/0015-controlled-closures-and-bounded-replanning.md)。操作员输入空闲格与原因，可封锁/解封；动态 revision 独立于静态布局版本。有路绕行，无路/预算耗尽暂停告警并保留在途货物和资源，只在新地图变化时重试，旧计算不能覆盖新状态。不保证无死锁。
 
 Day23 单容量通道与工作站资源许可，见 [Day23 验收报告](reports/day-23-acceptance.md) 与 [ADR0014](docs/adr/0014-physical-resource-permits.md)。进入前申请、确认出清后释放，故障/空闲占格不随进程租约过期释放；配置保存后不可重置，不提供自动充电或无死锁保证。
 

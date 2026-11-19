@@ -99,3 +99,7 @@ td button, th button { padding: 5px 10px; font-size: 12px; }
 .robot-panel fieldset { display: flex; flex-wrap: wrap; gap: .75rem; align-items: end; border: 0; padding: 0; margin: 0; }
 .robot-panel label { display: flex; flex-direction: column; gap: .35rem; max-width: 100%; }
 .robot-panel select { max-width: 100%; }
+.robot-panel th, .robot-panel td { white-space: normal; overflow-wrap: anywhere; }
+.robot-control { margin: .75rem 0; }
+.robot-control fieldset > p { flex-basis: 100%; margin: .35rem 0; }
+.robot-control legend { font-weight: 600; }

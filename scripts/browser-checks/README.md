@@ -228,3 +228,21 @@ npx --no-install --package @playwright/cli playwright-cli -s=warehouse-day24 clo
 从登录页使用 QA 管理员进入 A 仓，UI 初始化三车。普通授权 API 准备出库订单与分配，UI 给 robot-2 领任务、封锁其未来路线格，验证合法绕行；再封锁未占用目标，验证 NO_PATH 告警、至少八 tick 不移位不改货物/归属、刷新持久保留。解封后原任务完成，再清理第一处封锁，共四个 revision。按固定水位检查连续历史、所有持久 tick 不进入封锁格、最终库存与对账，再换 viewer 验证原生禁用和 403，另断言占格/旧 revision 409。UI 409 允许有界重读重试，不修改服务器状态骗过 fence。
 
 截图位于 `output/playwright/day-24/day-24-paused.png` 与 `day-24-completed.png`。只有完整回调成功且人工检查后才归档 reports；载货暂停的确定性正例还由真实库测试覆盖。脚本轮询/截图时刻不是性能测量或整份仓库的原子快照，不声称全局无死锁。
+
+## Day25 设备故障与原任务恢复
+
+用新 `pnpm qa:browser` 普通 seed 隔离库，先等集成PG完全退出；保持QA终端stdin，不输入额外夹具命令。
+
+本日固定使用本机已缓存的CLI 0.1.24离线执行，避免未指定版本时npx追逐未缓存版本。新机器若无该缓存需先安装对应测试工具；它不是应用运行依赖。
+
+```powershell
+New-Item -ItemType Directory -Force output/playwright/day-25
+npx --offline --yes --package @playwright/cli@0.1.24 playwright-cli -s=warehouse-day25 open http://127.0.0.1:15174 --browser chrome
+npx --offline --yes --package @playwright/cli@0.1.24 playwright-cli -s=warehouse-day25 run-code --filename scripts/browser-checks/day25-recovery.js
+npx --offline --yes --package @playwright/cli@0.1.24 playwright-cli -s=warehouse-day25 close
+# QA输入stop，确认退出。
+```
+
+脚本从登录页开始，普通授权API准备真实出库分配，UI初始化3车/配置从取货点到暂存点的单容量资源、给robot-2分配。先注入取货前故障、取消运输验证预占释放且故障保留、维修；新建第二单，取货后UI注入故障，验证NEEDS_RECOVERY、至少8tick不移位/耗电/丢货、实际通道owner保留、载货取消409、刷新不丢状态。维修后原claim一次完成，最终保持暂存占格与许可、库存对账一致，再逐条核对捕获水位前连续事件和唯一取放/取消。最后viewer原生禁用、API403。
+
+截图 `day-25-loaded-fault.png` / `day-25-repaired.png` 完整成功并人工检查后才复制reports；原始日志/诊断留output，不提交本地PDF。脚本有45秒观测界限，超时不把真实堵塞改成通过，不移走其他车或改库存。不是工业实时保证，也不是新增fleet API SIGKILL实验。
