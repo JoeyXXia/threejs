@@ -16,7 +16,7 @@ export function FleetPanel({ data, options, error, userId, spaceId, warehouseId,
   const command = useMutation({ mutationFn: ({ path, body }: { path: string; body: object }) => api(`${fleetPath(spaceId, warehouseId)}/${path}`, 'POST', body),
     onSuccess: () => Promise.all([client.invalidateQueries({ queryKey: fleetKey(userId, spaceId, warehouseId), exact: true }), client.invalidateQueries({ queryKey: simulationKey(userId, spaceId, warehouseId), exact: true })]) });
   useEffect(() => { if (command.error instanceof ApiError && command.error.status === 401) onUnauthorized(); }, [command.error, onUnauthorized]);
-  const active = data?.robots.some((r) => !['IDLE', 'COMPLETED', 'ERROR'].includes(r.phase));
+  const active = data?.robots.some((r) => r.charge || !['IDLE', 'COMPLETED', 'ERROR'].includes(r.phase));
   const stale = !!error || (active && now - advanced.current > 1500);
   const disabled = !data || data.role === 'VIEWER' || command.isPending;
   const [configurationError, setConfigurationError] = useState<string | null>(null);
@@ -34,6 +34,19 @@ export function FleetPanel({ data, options, error, userId, spaceId, warehouseId,
       <p>仅无活动/异常单车任务时允许切换，保留旧车位置/电量与统一 tick；初始化后不能重置车队。</p>
     </fieldset></form> : <>
       <p data-testid="fleet-status">车数 {data.robots.length} · tick {data.tick} · 水位 {data.watermark} · epoch {data.epoch}</p>
+      <section aria-label="电量与无进展诊断">
+        <h3>电量、充电与无进展</h3>
+        <p>接单须有卸货后到充电位的电量余量。仅空闲空载车可申请充电；充满停车仍占位。持续等待告警只提示人工检查，不自动挪车。</p>
+        {data.alerts.filter((a) => a.kind !== 'DEVICE_FAULT').map((a) => <p role="alert" key={a.key}>{a.robotId} · {a.kind} · {a.kind === 'ENERGY_LOW' ? '电量不足，保留原任务及货物' : '连续等待，请检查通道和占位'}</p>)}
+        {data.robots.map((r) => <form className="robot-control" key={r.id} aria-label={`${r.id} 充电`} onSubmit={(event) => {
+          event.preventDefault(); const form = new FormData(event.currentTarget);
+          command.mutate({ path: 'charge', body: { robotId: r.id, action: r.charge ? 'STOP' : 'START', reason: form.get('reason') } });
+        }}><fieldset disabled={disabled || !!error}>
+          <legend>{r.id} · {(r.battery / 100).toFixed(2)}% {r.charge && `· 充电位 (${r.charge.dock.x},${r.charge.dock.z}) · ${r.to.x === r.charge.dock.x && r.to.z === r.charge.dock.z ? '充电中' : '去充电位'}`}</legend>
+          <label>{r.id} 充电原因<input name="reason" required maxLength={200} /></label>
+          <button disabled={!r.charge && (!!r.deviceFault || r.battery >= 10000 || !['IDLE', 'COMPLETED'].includes(r.phase))}>{r.charge ? '停止充电计划' : '申请充电'}</button>
+        </fieldset></form>)}
+      </section>
       <section aria-label="设备故障与恢复">
         <h3>步边界故障 / 原任务恢复</h3>
         <p>仅软件故障演示。故障保留位置、货物、目标容量和通道许可；载货后禁止取消。取消的是未取货运输，不撤销历史出库分配单，已取消来源不能重新领取。</p>
@@ -89,11 +102,11 @@ export function FleetPanel({ data, options, error, userId, spaceId, warehouseId,
         command.mutate({ path: 'assign', body: { robotId: form.get('robotId'), kind, reason: form.get('reason'),
           ...(kind === 'OUTBOUND' ? { allocationId: form.get('source'), stagingLocationId: form.get('target') } : { inboundOrderId: form.get('source'), targetLocationId: form.get('target') }) } });
       }}><fieldset disabled={disabled || !!error}>
-        <label>分配车辆<select name="robotId" required>{data.robots.filter((r) => ['IDLE', 'COMPLETED'].includes(r.phase)).map((r) => <option key={r.id} value={r.id}>{r.id}</option>)}</select></label>
+        <label>分配车辆<select name="robotId" required>{data.robots.filter((r) => !r.charge && !r.deviceFault && ['IDLE', 'COMPLETED'].includes(r.phase)).map((r) => <option key={r.id} value={r.id}>{r.id}</option>)}</select></label>
         <label>多车任务类型<select value={kind} onChange={(event) => setKind(event.target.value)}><option value="OUTBOUND">出库搬运</option><option value="PUTAWAY">质检放行上架</option></select></label>
         <label>多车任务来源<select key={`source:${kind}`} name="source" required><option value="">选择来源</option>{(kind === 'OUTBOUND' ? options?.allocations : options?.putawayReceipts)?.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}</select></label>
         <label>多车任务目标<select key={`target:${kind}`} name="target" required><option value="">选择目标</option>{(kind === 'OUTBOUND' ? options?.staging : options?.storage)?.map((r) => <option key={r.id} value={r.id}>{r.code}</option>)}</select></label>
-        <label>分配原因<input name="reason" required maxLength={200} /></label><button disabled={!data.robots.some((r) => ['IDLE', 'COMPLETED'].includes(r.phase))}>确认分配到车辆</button>
+        <label>分配原因<input name="reason" required maxLength={200} /></label><button disabled={!data.robots.some((r) => !r.charge && !r.deviceFault && ['IDLE', 'COMPLETED'].includes(r.phase))}>确认分配到车辆</button>
       </fieldset></form>
     </>}
   </section>;

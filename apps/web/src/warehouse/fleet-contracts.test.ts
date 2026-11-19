@@ -56,3 +56,13 @@ it('keeps device recovery status consistent with cargo and rejects future fault 
   expect(fleetResponseSchema.safeParse({ ...data, robots: data.robots.map((r) => ({ ...r, recoveryStatus: 'NEEDS_RECOVERY' })) }).success).toBe(false);
   expect(fleetResponseSchema.safeParse({ ...data, robots: data.robots.map((r) => ({ ...r, deviceFault: { reason: 'fault', sinceTick: 1 } })) }).success).toBe(false);
 });
+
+it('accepts empty charge plans and one diagnostic per robot; rejects full or cargo-bearing plans', () => {
+  const data = sample();
+  const rest = { ...data, alerts: [{ key: 'robot-1:charge:1:0:NO_PROGRESS', robotId: 'robot-1', kind: 'NO_PROGRESS' }], robots: data.robots.map((r, i) =>
+    i ? r : { ...r, battery: 9990, charge: { dock: { x: 1, z: 0 } } }) };
+  expect(fleetResponseSchema.safeParse(rest).success).toBe(true);
+  expect(fleetResponseSchema.safeParse({ ...rest, alerts: [...rest.alerts, ...rest.alerts] }).success).toBe(false);
+  expect(fleetResponseSchema.safeParse({ ...rest, robots: rest.robots.map((r) => ({ ...r, battery: 10000 })) }).success).toBe(false);
+  expect(fleetResponseSchema.safeParse({ ...rest, robots: rest.robots.map((r, i) => i ? r : { ...r, phase: 'TRANSPORT', taskId: fixtureId(4), ledgerTaskId: fixtureId(5), carrying: true }) }).success).toBe(false);
+});
