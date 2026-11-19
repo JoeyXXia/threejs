@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import database from '../packages/database/index.cjs';
 import ledger from '../packages/database/reconcile.cjs';
-import { validateNavigation, validateRecovery, validateResources } from '../packages/simulation/dist/index.js';
+import { validateEnergy, validateNavigation, validateRecovery, validateResources } from '../packages/simulation/dist/index.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 // Always create our own cluster/database; never use or reset DATABASE_URL/.env.
@@ -74,8 +74,8 @@ try {
       }
       const fleets = await tx.warehouseRuntime.findMany({ where: { fleet: { not: database.Prisma.DbNull } } });
       for (const row of fleets) {
-        const last = await tx.warehouseEvent.findFirst({ where: { warehouseId: row.warehouseId, kind: { in: ['FLEET_INITIALIZED', 'FLEET_RESOURCES_CONFIGURED', 'FLEET_NAVIGATION_CHANGED', 'FLEET_FAULT', 'FLEET_REPAIR', 'FLEET_CANCEL', 'FLEET_ASSIGNED', 'FLEET_TICK', 'FLEET_ERROR'] } }, orderBy: { seq: 'desc' } });
-        try { validateResources(row.fleet.state); validateNavigation(row.fleet.state); validateRecovery(row.fleet.state); } catch { checkpointMismatches.push('resource/navigation:' + row.warehouseId); }
+        const last = await tx.warehouseEvent.findFirst({ where: { warehouseId: row.warehouseId, kind: { in: ['FLEET_INITIALIZED', 'FLEET_RESOURCES_CONFIGURED', 'FLEET_NAVIGATION_CHANGED', 'FLEET_FAULT', 'FLEET_REPAIR', 'FLEET_CANCEL', 'FLEET_CHARGE', 'FLEET_ASSIGNED', 'FLEET_TICK', 'FLEET_ERROR'] } }, orderBy: { seq: 'desc' } });
+        try { validateResources(row.fleet.state); validateNavigation(row.fleet.state); validateRecovery(row.fleet.state); validateEnergy(row.fleet.state); } catch { checkpointMismatches.push('resource/navigation:' + row.warehouseId); }
         if (row.fleet.state.tick !== row.tick || !last || last.payload.tick !== row.tick) checkpointMismatches.push('fleet:' + row.warehouseId);
       }
       const warehouses = await tx.warehouse.findMany({ include: { activeLayout: true }, orderBy: { id: 'asc' } });

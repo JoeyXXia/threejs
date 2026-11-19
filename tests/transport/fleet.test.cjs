@@ -425,3 +425,70 @@ test('Day25 loaded putaway repair posts only one original drop; a second loaded 
   const p = await successor.prepare(scope.warehouseId); await successor.commit(p); await successor.onModuleDestroy();
   const recovered = await service.read(scope); assert.equal(recovered.robots[0].recoveryStatus, 'NEEDS_RECOVERY'); assert.deepEqual(recovered.robots[0].to, outboundState.robots[0].to); await reconciled();
 });
+
+const chargeBody = (robotId, action = 'START') => ({ robotId, action, reason: 'Day26 isolated charge test' });
+async function fixtureBattery(values) {
+  const runtime = await db.warehouseRuntime.findUniqueOrThrow({ where: { warehouseId: scope.warehouseId } });
+  for (const r of runtime.fleet.state.robots) if (values[r.id] !== undefined) r.simulation.robot.battery = values[r.id];
+  await db.warehouseRuntime.update({ where: { warehouseId: scope.warehouseId }, data: { fleet: runtime.fleet } });
+}
+
+test('Day26 rejects insufficient budget and an unreachable dock without creating transport reservations or a claim', async () => {
+  await init(); const body = await input();
+  await fixtureBattery({ 'robot-1': 20 });
+  const before = await snapshot();
+  await assert.rejects(service.assign(scope, body), { status: 409 });
+  assert.deepEqual(await snapshot(), before);
+  assert.equal(await db.transportTask.count({ where: { warehouseId: scope.warehouseId } }), 0);
+  await fixtureBattery({ 'robot-1': 10000 });
+  const dock = { x: 0, z: 0 };
+  await service.configure(scope, resourceCommand([{ id: 'dock', kind: 'CHARGING', cells: [dock] }]));
+  await service.changeMap(scope, mapCommand([dock], true));
+  const closed = await snapshot();
+  await assert.rejects(service.assign(scope, body), { status: 409 });
+  await assert.rejects(service.charge(scope, chargeBody('robot-1')), { status: 409 });
+  assert.deepEqual(await snapshot(), closed); await reconciled();
+});
+
+test('Day26 charge arbitration persists one physical owner, clips at full, and records one stall alert in twenty-five ticks', async () => {
+  const initial = await init(), dock = initial.robots[0].to;
+  await service.configure(scope, resourceCommand([{ id: 'dock', kind: 'CHARGING', cells: [dock] }]));
+  await fixtureBattery({ 'robot-1': 9751, 'robot-2': 9700 });
+  await assert.rejects(service.charge(viewer, chargeBody('robot-1')), { status: 403 });
+  await service.charge(scope, chargeBody('robot-1')); await service.charge(scope, chargeBody('robot-2'));
+  const stable = await service.read(scope); assert.ok(stable.robots.every((r) => r.id === 'robot-3' || r.charge));
+  const old = await service.prepare(scope.warehouseId);
+  await service.charge(scope, chargeBody('robot-2', 'STOP'));
+  await assert.rejects(service.commit(old), { status: 409 });
+  await service.charge(scope, chargeBody('robot-2'));
+  for (let i = 0; i < 25; i++) {
+    await service.advance();
+    const s = await service.read(scope);
+    assert.equal(s.resources[0].ownerId, 'robot-1'); assert.notDeepEqual(s.robots[1].to, dock);
+    if (i === 0) { assert.equal(s.robots[0].battery, 10000); assert.equal(s.robots[0].charge, null); }
+  }
+  const outcome = await other.read(scope);
+  assert.equal(outcome.robots[1].waitReason, 'RESOURCE_BUSY');
+  const expected = outcome.alerts.find((a) => a.robotId === 'robot-2'); assert.equal(expected.kind, 'NO_PROGRESS');
+  const events = await db.warehouseEvent.findMany({ where: { warehouseId: scope.warehouseId, kind: 'FLEET_TICK' } });
+  assert.deepEqual(events.flatMap((e) => e.payload.newAlerts), [expected]);
+  assert.equal(await db.fleetClaim.count({ where: { warehouseId: scope.warehouseId } }), 0);
+  await reconciled(); // Retain waiting charge plan for post-restart validation.
+});
+
+test('Day26 loaded low energy stops without cargo ledger writes, and publishes one durable energy alert', async () => {
+  await init(); await service.assign(scope, await input());
+  const picked = await untilPhase('TRANSPORT');
+  await fixtureBattery({ 'robot-1': 1 });
+  const before = await snapshot();
+  for (let i = 0; i < 24; i++) await service.advance();
+  const s = await service.read(scope), r = s.robots[0];
+  assert.deepEqual(r.to, picked.robots[0].to); assert.equal(r.battery, 1);
+  assert.equal(r.taskId, picked.robots[0].taskId); assert.equal(r.carrying, true); assert.equal(r.waitReason, 'ENERGY_LOW');
+  assert.equal(s.alerts[0].kind, 'ENERGY_LOW');
+  const after = await snapshot(); assert.deepEqual(after.claims, before.claims); assert.deepEqual(after.balances, before.balances); assert.equal(after.movements, before.movements);
+  await assert.rejects(service.charge(scope, chargeBody('robot-1')), { status: 409 });
+  const ticks = await db.warehouseEvent.findMany({ where: { warehouseId: scope.warehouseId, kind: 'FLEET_TICK' } });
+  assert.deepEqual(ticks.flatMap((e) => e.payload.newAlerts), s.alerts);
+  await reconciled();
+});

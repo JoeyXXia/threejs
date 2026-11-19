@@ -30,4 +30,8 @@ export class FleetController {
   control(@Req() req: AuthRequest, @Param('spaceId') spaceId: string, @Param('warehouseId') warehouseId: string, @Body() body: unknown) {
     return this.fleet.control({ actorId: req.identity.userId, spaceId, warehouseId }, body);
   }
+  @Post('charge')
+  charge(@Req() req: AuthRequest, @Param('spaceId') spaceId: string, @Param('warehouseId') warehouseId: string, @Body() body: unknown) {
+    return this.fleet.charge({ actorId: req.identity.userId, spaceId, warehouseId }, body);
+  }
 }

@@ -228,8 +228,8 @@ const navigationIssueSchema = z.object({ revision: quantity, reason: z.enum(['NO
 export const fleetEnvelopeSchema = z.object({ format: z.literal(1), from: z.array(robotCell).min(3).max(5), state: z.object({
   schemaVersion: z.literal(1), tick: quantity,
   robots: z.array(z.object({ id: z.string().regex(/^robot-[1-5]$/), simulation: simulationStateSchema, work: fleetWorkSchema.nullable(),
-    priority: quantity.max(1000), waitTicks: quantity, totalWaitTicks: quantity,
-    waitReason: z.enum(['OCCUPIED', 'EDGE_SWAP', 'TARGET_CONFLICT', 'RESOURCE_BUSY', 'ROUTE_BLOCKED', 'DEVICE_FAULT']).nullable(), blockerId: z.string().nullable(), resourceWaitId: z.string().nullable().optional(), navigationIssue: navigationIssueSchema.nullable().optional(), deviceFault: deviceFaultSchema.nullable().optional() })).min(3).max(5),
+    charge: z.object({ dock: robotCell }).nullable().optional(), priority: quantity.max(1000), waitTicks: quantity, totalWaitTicks: quantity,
+    waitReason: z.enum(['OCCUPIED', 'EDGE_SWAP', 'TARGET_CONFLICT', 'RESOURCE_BUSY', 'ROUTE_BLOCKED', 'DEVICE_FAULT', 'ENERGY_LOW']).nullable(), blockerId: z.string().nullable(), resourceWaitId: z.string().nullable().optional(), navigationIssue: navigationIssueSchema.nullable().optional(), deviceFault: deviceFaultSchema.nullable().optional() })).min(3).max(5),
   assignments: z.array(z.object({ taskId: id, robotId: z.string(), approach: z.array(robotCell).min(1).max(65536), transport: z.array(robotCell).min(1).max(65536) })).max(10000),
   resources: z.array(fleetResourceSchema).max(32).optional(),
   navigation: navigationSchema.optional(),
@@ -237,13 +237,16 @@ export const fleetEnvelopeSchema = z.object({ format: z.literal(1), from: z.arra
 export const fleetResponseSchema = z.object({ spaceId: id, warehouseId: id, role: z.enum(['ADMIN', 'OPERATOR', 'VIEWER']),
   enabled: z.boolean(), tick: quantity, watermark: quantity, epoch: quantity, stateVersion: quantity,
   layoutId: id.nullable(), layoutVersion: quantity.nullable(), resources: z.array(fleetResourceSchema).max(32).default([]), navigation: navigationSchema.default({ revision: 0, closed: [] }),
+  alerts: z.array(z.object({ key: z.string().min(1).max(180), robotId: z.string(), kind: z.enum(['DEVICE_FAULT', 'ENERGY_LOW', 'NO_PROGRESS']) })).max(5).default([]),
   robots: z.array(z.object({ id: z.string(), taskId: id.nullable(), ledgerTaskId: id.nullable(),
-    phase: z.enum(['IDLE', 'APPROACH', 'LOADING', 'TRANSPORT', 'UNLOADING', 'COMPLETED', 'ERROR']),
+    charge: z.object({ dock: robotCell }).nullable().default(null), phase: z.enum(['IDLE', 'APPROACH', 'LOADING', 'TRANSPORT', 'UNLOADING', 'COMPLETED', 'ERROR']),
     from: robotCell, to: robotCell, battery: quantity.max(10000), carrying: z.boolean(), route: z.array(robotCell).max(65536),
-    waitTicks: quantity, totalWaitTicks: quantity, waitReason: z.enum(['OCCUPIED', 'EDGE_SWAP', 'TARGET_CONFLICT', 'RESOURCE_BUSY', 'ROUTE_BLOCKED', 'DEVICE_FAULT']).nullable(),
+    waitTicks: quantity, totalWaitTicks: quantity, waitReason: z.enum(['OCCUPIED', 'EDGE_SWAP', 'TARGET_CONFLICT', 'RESOURCE_BUSY', 'ROUTE_BLOCKED', 'DEVICE_FAULT', 'ENERGY_LOW']).nullable(),
     blockerId: z.string().nullable(), resourceWaitId: z.string().nullable().default(null), deviceFault: deviceFaultSchema.nullable().default(null), recoveryStatus: z.enum(['PAUSED', 'NEEDS_RECOVERY']).nullable().default(null), navigationIssue: navigationIssueSchema.nullable().default(null), error: z.string().nullable() })).max(5),
 }).superRefine((value, ctx) => {
   for (const r of value.robots) if (r.deviceFault ? (r.deviceFault.sinceTick > value.tick || r.recoveryStatus !== (r.carrying ? 'NEEDS_RECOVERY' : 'PAUSED') || !['DEVICE_FAULT', 'ROUTE_BLOCKED'].includes(r.waitReason ?? '')) : r.recoveryStatus !== null) ctx.addIssue({ code: 'custom', message: 'Invalid device recovery snapshot' });
+  if (new Set(value.alerts.map((a) => a.robotId)).size !== value.alerts.length || value.alerts.some((a) => !value.robots.some((r) => r.id === a.robotId))) ctx.addIssue({ code: 'custom', message: 'Invalid fleet alerts' });
+  for (const r of value.robots) if (r.charge && (r.deviceFault || r.carrying || !['IDLE', 'COMPLETED'].includes(r.phase) || r.battery >= 10000)) ctx.addIssue({ code: 'custom', message: 'Invalid charge state' });
   const resourceIds = new Set<string>(), resourceCells = new Set<string>();
   if (new Set(value.navigation.closed.map((p) => `${p.x}:${p.z}`)).size !== value.navigation.closed.length
     || value.navigation.closed.some((p) => value.robots.some((r) => [r.from, r.to].some((c) => c.x === p.x && c.z === p.z)))) ctx.addIssue({ code: 'custom', message: 'Occupied closure' });
