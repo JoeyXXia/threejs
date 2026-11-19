@@ -51,10 +51,10 @@ export function changeNavigation(state: FleetState, cells: readonly Cell[], clos
     const failed = [a, b].find((result) => result && result.status !== 'found');
     if (failed) return { ...r, simulation: { ...r.simulation, paused: true }, navigationIssue: { revision: navigation.revision,
       reason: ['node-limit', 'time-limit'].includes(failed.status) ? 'BUDGET' : 'NO_PATH' }, waitReason: 'ROUTE_BLOCKED', blockerId: null, resourceWaitId: null };
-    const simulation = applyCommand({ ...r.simulation, paused: r.navigationIssue ? false : r.simulation.paused,
+    const simulation = applyCommand({ ...r.simulation, paused: !!r.deviceFault || (r.navigationIssue ? false : r.simulation.paused),
       robot: { ...r.simulation.robot, status: 'IDLE' } }, { type: 'route', layoutId: map.layoutId, layoutVersion: map.version, path: a.path });
     return { ...r, simulation, work: { ...r.work!, transportPath: b?.path ?? (phase === 'TRANSPORT' ? a.path : r.work!.transportPath) },
-      navigationIssue: null, waitTicks: 0, waitReason: null, blockerId: null, resourceWaitId: null };
+      navigationIssue: null, waitTicks: 0, waitReason: r.deviceFault ? 'DEVICE_FAULT' : null, blockerId: null, resourceWaitId: null };
   });
   const result = { ...state, navigation, robots };
   validateNavigation(result);

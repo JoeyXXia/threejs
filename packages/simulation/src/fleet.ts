@@ -2,13 +2,14 @@ import { createSimulation, type Cell, type SimulationMap, type SimulationState }
 import { createRobotTask, stepRobotTask, type RobotTask } from './task.js';
 import { coordinateResources, settledResources, type FleetResource } from './resources.js';
 import { validateNavigation, type Navigation, type NavigationIssue } from './navigation.js';
+import { validateRecovery, type DeviceFault } from './recovery.js';
 
-export type WaitReason = 'OCCUPIED' | 'EDGE_SWAP' | 'TARGET_CONFLICT' | 'RESOURCE_BUSY' | 'ROUTE_BLOCKED';
+export type WaitReason = 'OCCUPIED' | 'EDGE_SWAP' | 'TARGET_CONFLICT' | 'RESOURCE_BUSY' | 'ROUTE_BLOCKED' | 'DEVICE_FAULT';
 export type MoveProposal = Readonly<{ robotId: string; from: Cell; to: Cell; priority: number; waitTicks: number }>;
 export type MoveDecision = Readonly<{ robotId: string; allowed: boolean; reason: WaitReason | null; blockerId: string | null; resourceId?: string | null }>;
 export type FleetWork = Readonly<Omit<RobotTask, 'simulation'> & { taskId: string }>;
 export type FleetRobot = Readonly<{ id: string; simulation: SimulationState; work: FleetWork | null;
-  priority: number; waitTicks: number; totalWaitTicks: number; waitReason: WaitReason | null; blockerId: string | null; resourceWaitId?: string | null | undefined; navigationIssue?: NavigationIssue | null | undefined }>;
+  priority: number; waitTicks: number; totalWaitTicks: number; waitReason: WaitReason | null; blockerId: string | null; resourceWaitId?: string | null | undefined; navigationIssue?: NavigationIssue | null | undefined; deviceFault?: DeviceFault | null | undefined }>;
 type Assignment = Readonly<{ taskId: string; robotId: string; approach: readonly Cell[]; transport: readonly Cell[] }>;
 export type FleetState = Readonly<{ schemaVersion: 1; tick: number; robots: readonly FleetRobot[]; assignments: readonly Assignment[]; resources?: readonly FleetResource[] | undefined; navigation?: Navigation | undefined }>;
 export type FleetEffect = Readonly<{ robotId: string; taskId: string; stage: 'take' | 'drop'; proposalKey: string }>;
@@ -77,7 +78,7 @@ export function assignFleetTask(state: FleetState, robotId: string, taskId: stri
   if (state.assignments.length >= 10000) throw new RangeError('assignment history limit');
   const robot = state.robots.find((r) => r.id === robotId);
   if (!robot) throw new Error('unknown robot');
-  if (robot.work && robot.work.phase !== 'COMPLETED') throw new Error('robot has an active or failed task');
+  if (robot.deviceFault || (robot.work && robot.work.phase !== 'COMPLETED')) throw new Error('robot has an active or failed task');
   const task = createRobotTask(robot.simulation, approach, transport);
   const assignment = Object.freeze({ taskId, robotId, approach: copied(approach), transport: copied(transport) });
   const result = Object.freeze({ ...state, assignments: Object.freeze([...state.assignments, assignment]),
@@ -101,6 +102,7 @@ export function stepFleet(state: FleetState): Readonly<{ state: FleetState; effe
   }
   const reference = state.robots[0]!.simulation;
   validateNavigation(state);
+  validateRecovery(state);
   const proposals = state.robots.map((r) => {
     const s = r.simulation;
     if (s.robot.id !== r.id || s.tick !== state.tick || s.logicalTimeMs !== state.tick * s.tickMs
@@ -123,10 +125,10 @@ export function stepFleet(state: FleetState): Readonly<{ state: FleetState; effe
   const byId = new Map(decisions.map((d) => [d.robotId, d])), tick = state.tick + 1, effects: FleetEffect[] = [];
   const robots = state.robots.map((r, i): FleetRobot => {
     const decision = byId.get(r.id)!, proposal = proposals[i]!;
-    if (!decision.allowed || r.navigationIssue) {
+    if (!decision.allowed || r.navigationIssue || r.deviceFault) {
       if (!integer(r.waitTicks + 1) || !integer(r.totalWaitTicks + 1)) throw new RangeError('wait counter overflow');
       return Object.freeze({ ...r, simulation: clock(r.simulation, tick), waitTicks: r.waitTicks + 1,
-        totalWaitTicks: r.totalWaitTicks + 1, waitReason: r.navigationIssue ? 'ROUTE_BLOCKED' : decision.reason, blockerId: decision.blockerId, resourceWaitId: decision.resourceId ?? null });
+        totalWaitTicks: r.totalWaitTicks + 1, waitReason: r.deviceFault ? 'DEVICE_FAULT' : r.navigationIssue ? 'ROUTE_BLOCKED' : decision.reason, blockerId: decision.blockerId, resourceWaitId: decision.resourceId ?? null });
     }
     if (proposal.effect) effects.push(Object.freeze({ robotId: r.id, taskId: r.work!.taskId,
       stage: proposal.effect, proposalKey: `fleet:${r.work!.taskId}:${proposal.effect}` }));
