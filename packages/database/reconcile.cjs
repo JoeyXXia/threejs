@@ -45,7 +45,7 @@ async function reconcileReservations(tx, scope) {
           ELSE a."locationId" END AS "locationId", sum(a.quantity)::bigint AS expected
       FROM allocations a JOIN orders o ON o.id=a."orderId"
       LEFT JOIN "TransportTask" t ON t."allocationId"=a.id
-      WHERE o.status='ALLOCATED' GROUP BY 1,2,3,4,5,6
+      WHERE o.status='ALLOCATED' AND (t.phase IS NULL OR t.phase<>'CANCELLED') GROUP BY 1,2,3,4,5,6
     ), reserved_rows AS (
       SELECT * FROM outbound_allocated
       UNION ALL
@@ -106,7 +106,7 @@ async function reconcileReservations(tx, scope) {
     FROM claims c JOIN "WarehouseRuntime" r ON r."warehouseId"=c."warehouseId"
     LEFT JOIN "TransportTask" t ON c.kind='OUTBOUND' AND t.id=c."taskId"
     LEFT JOIN "PutawayTask" pt ON c.kind='PUTAWAY' AND pt.id=c."taskId"
-    WHERE coalesce(t.phase,pt.phase)::text IS DISTINCT FROM CASE WHEN NOT c.active THEN 'STAGED' WHEN c.loaded THEN 'IN_TRANSIT' ELSE 'READY' END
+    WHERE coalesce(t.phase,pt.phase)::text IS DISTINCT FROM CASE WHEN NOT c.active THEN CASE WHEN coalesce(t.phase,pt.phase)='CANCELLED' THEN 'CANCELLED' ELSE 'STAGED' END WHEN c.loaded THEN 'IN_TRANSIT' ELSE 'READY' END
       OR NOT EXISTS (SELECT 1 FROM jsonb_array_elements(coalesce(r.fleet->'state'->'assignments','[]'::jsonb)) a
         WHERE a->>'taskId'=c.id::text AND a->>'robotId'=c."robotId")
       OR (c.active AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(coalesce(r.fleet->'state'->'robots','[]'::jsonb)) b

@@ -42,6 +42,7 @@ export class PutawayService {
   async moveInTransaction(tx: Tx, scope: Scope, taskId: string, stage: 'take' | 'drop', reason: string) {
     const task = await tx.putawayTask.findFirst({ where: { id: taskId, spaceId: scope.spaceId, warehouseId: scope.warehouseId }, include: { receipt: true } });
     if (!task) throw new NotFoundException('上架任务不可访问');
+    if (task.phase === 'CANCELLED') throw new ConflictException('已取消任务不能取放');
     const taking = stage === 'take';
     if (task.phase === 'STAGED' || (taking && task.phase === 'IN_TRANSIT')) return task;
     if (!taking && task.phase !== 'IN_TRANSIT') throw new ConflictException('尚未取货');
@@ -57,6 +58,17 @@ export class PutawayService {
     await tx.inventoryMovement.create({ data: { spaceId: scope.spaceId, warehouseId: scope.warehouseId, skuId: r.skuId, batchId: r.batchId, quantity: r.quantity, kind: 'TRANSFER', sourceLocationId, destinationLocationId, sourceQuality: 'RELEASED', destinationQuality: 'RELEASED', businessKey: `putaway:${taskId}:${stage}`, reference: taskId, actorType: 'USER', actorId: scope.actorId, reason } });
     await this.audit(tx, scope, taking ? 'PUTAWAY_TAKEN' : 'PUTAWAY_DROPPED', taskId, reason);
     return updated;
+  }
+
+  async cancelInTransaction(tx: Tx, scope: Scope, taskId: string, reason: string) {
+    const task = await tx.putawayTask.findFirst({ where: { id: taskId, spaceId: scope.spaceId, warehouseId: scope.warehouseId }, include: { receipt: true } });
+    if (!task || task.phase !== 'READY') throw new ConflictException('只能取消未取货上架');
+    const r = task.receipt;
+    const changed = await tx.inventoryBalance.updateMany({ where: { spaceId: scope.spaceId, warehouseId: scope.warehouseId, skuId: r.skuId, batchId: r.batchId,
+      locationId: r.qcLocationId, quality: 'RELEASED', reserved: { gte: r.quantity } }, data: { reserved: { decrement: r.quantity }, version: { increment: 1 } } });
+    if (changed.count !== 1) throw new ConflictException('QC 预占不一致');
+    await tx.putawayTask.update({ where: { id: taskId }, data: { phase: 'CANCELLED' } });
+    await this.audit(tx, scope, 'PUTAWAY_CANCELLED', taskId, reason);
   }
 
   private async audit(tx: Tx, scope: Scope, action: string, correlationId: string, reason: string) {

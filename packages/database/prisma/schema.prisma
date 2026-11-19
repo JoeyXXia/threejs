@@ -154,6 +154,7 @@ enum TransportPhase {
   READY
   IN_TRANSIT
   STAGED
+  CANCELLED
 }
 
 model LayoutVersion {
@@ -430,7 +431,7 @@ model InboundOrder {
   @@index([spaceId, warehouseId, createdAt])
 }
 
-// Day 20: one full released receipt, one storage destination; no partial/cancel flow.
+// Full released receipt to one storage destination. Day25 permits terminal cancellation before pickup only.
 model PutawayTask {
   id String @id @default(uuid()) @db.Uuid
   spaceId String @db.Uuid

@@ -1,0 +1,1 @@
+ALTER TYPE "TransportPhase" ADD VALUE 'CANCELLED';

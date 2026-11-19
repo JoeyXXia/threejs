@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Inject, Inj
 import { randomUUID } from 'node:crypto';
 import { Prisma, type WarehouseRuntime } from '@warehouse-twin/database';
 import { fleetEnvelopeSchema, resourceDefinitionSchema, robotCheckpointSchema, type FleetResponse } from '@warehouse-twin/contracts';
-import { assignFleetTask, changeNavigation, configureResources, createFleet, findPath, navigationOf, stepFleet, type FleetState, type Cell } from '@warehouse-twin/simulation';
+import { assignFleetTask, changeNavigation, configureResources, controlRobot, createFleet, findPath, navigationOf, stepFleet, type FleetState, type Cell } from '@warehouse-twin/simulation';
 import { DatabaseService } from '../database.service';
 import { TransportService } from '../transport/transport.service';
 import { PutawayService } from '../transport/putaway.service';
@@ -83,8 +83,47 @@ export class FleetService implements OnModuleInit, OnModuleDestroy {
           return { id: r.id, taskId: r.work?.taskId ?? null, ledgerTaskId: claim?.taskId ?? null, phase: r.work?.phase ?? 'IDLE',
             from: e.from[i]!, to: r.simulation.robot.position, battery: r.simulation.robot.battery, carrying: claim?.loaded ?? false,
             route: [...r.simulation.robot.path.slice(Math.max(0, r.simulation.robot.next - 1))], waitTicks: r.waitTicks, totalWaitTicks: r.totalWaitTicks,
-            waitReason: r.waitReason, blockerId: r.blockerId, resourceWaitId: r.resourceWaitId ?? null, navigationIssue: r.navigationIssue ?? null, error: r.work?.error ?? null }; }) ?? [] };
+            waitReason: r.waitReason, blockerId: r.blockerId, resourceWaitId: r.resourceWaitId ?? null, navigationIssue: r.navigationIssue ?? null,
+            deviceFault: r.deviceFault ?? null, recoveryStatus: r.deviceFault ? (claim?.loaded ? 'NEEDS_RECOVERY' : 'PAUSED') : null, error: r.work?.error ?? null }; }) ?? [] };
     }, { isolationLevel: 'RepeatableRead' });
+  }
+  async control(scope: Scope, value: unknown) {
+    const body = objectInput(value, ['robotId', 'action', 'expectedTaskId', 'reason']);
+    const robotId = textInput(body.robotId, 1, 64), reason = textInput(body.reason, 1, 200);
+    const taskId = body.expectedTaskId === null ? null : uuidInput(body.expectedTaskId), action = body.action;
+    if (action !== 'FAULT' && action !== 'REPAIR' && action !== 'CANCEL') throw new BadRequestException('恢复操作无效');
+    await this.db.$transaction(async (tx) => {
+      // Same ACL -> warehouse/runtime lock order as assignment and tick commit.
+      await this.auth(tx, scope, true);
+      const row = await lockWarehouseState(tx, scope), e = this.decode(row), r = e?.state.robots.find((r) => r.id === robotId);
+      if (!e || !r || (r.work?.taskId ?? null) !== taskId) throw new ConflictException('任务归属已变化，请重读');
+      const claim = taskId ? await tx.fleetClaim.findFirst({ where: { id: taskId, ...{ spaceId: scope.spaceId, warehouseId: scope.warehouseId }, robotId, active: true } }) : null;
+      if (taskId && !claim) throw new ConflictException('任务不是活动归属');
+      const warehouse = await tx.warehouse.findUniqueOrThrow({ where: { id: scope.warehouseId } });
+      if (warehouse.activeLayoutId !== r.simulation.map.layoutId) throw new ConflictException('布局已变化，不能盲目恢复');
+      if (action === 'REPAIR' && claim) {
+        const owner = await tx.warehouseAccess.findUnique({ where: { userId_spaceId_warehouseId: { userId: claim.actorId, spaceId: scope.spaceId, warehouseId: scope.warehouseId } } });
+        if (!owner || owner.role === 'VIEWER') throw new ConflictException('原任务授权已撤销，不能恢复');
+      }
+      if (claim) {
+        const ledger = claim.kind === 'OUTBOUND' ? await tx.transportTask.findUnique({ where: { id: claim.taskId } }) : await tx.putawayTask.findUnique({ where: { id: claim.taskId } });
+        if (ledger?.phase !== (claim.loaded ? 'IN_TRANSIT' : 'READY')) throw new ConflictException('领域阶段不一致，不能操作');
+      }
+      let state: FleetState;
+      try { state = controlRobot(e.state, robotId, action, reason); } catch { throw new ConflictException('仅模拟故障可维修；仅取货前可取消，载货必须保留原任务恢复'); }
+      if (action === 'CANCEL') {
+        if (!claim || claim.loaded) throw new ConflictException('载货或无活动任务，禁止取消');
+        await (claim.kind === 'OUTBOUND' ? this.transport : this.putaway).cancelInTransaction(tx, scope, claim.taskId, reason);
+        await tx.fleetClaim.update({ where: { id: claim.id }, data: { active: false } });
+      }
+      await tx.warehouseRuntime.update({ where: { warehouseId: scope.warehouseId }, data: { fleet: json({ ...e, state }) } });
+      const payload = { tick: row.tick, robotId, taskId, action, reason, actorId: scope.actorId, carrying: claim?.loaded ?? false,
+        phase: r.work?.phase ?? null, deviceFault: state.robots.find((b) => b.id === robotId)!.deviceFault ?? null };
+      await tx.auditLog.create({ data: { spaceId: scope.spaceId, warehouseId: scope.warehouseId, actorId: scope.actorId,
+        action: `FLEET_${action}`, reason, requestId: randomUUID(), correlationId: taskId, before: json({ robot: r }), after: json(payload) } });
+      await appendWarehouseEvent(tx, scope, `FLEET_${action}`, payload);
+    }, { timeout: 15000 });
+    return this.read(scope);
   }
   async changeMap(scope: Scope, value: unknown) {
     const body = objectInput(value, ['cells', 'closed', 'expectedRevision', 'reason']), reason = textInput(body.reason, 1, 200);
@@ -185,6 +224,7 @@ export class FleetService implements OnModuleInit, OnModuleDestroy {
       await this.auth(tx, scope, true); const current = await lockWarehouseState(tx, scope), saved = this.decode(current);
       if (!saved) throw new ConflictException('车队未初始化');
       const ledger = kind === 'OUTBOUND' ? await this.transport.createInTransaction(tx, scope, sourceId, targetId, reason) : await this.putaway.createInTransaction(tx, scope, sourceId, targetId, reason);
+      if (ledger.phase === 'CANCELLED') throw new ConflictException('已取消运输保留历史，不可重新领取');
       const existing = await tx.fleetClaim.findUnique({ where: { warehouseId_kind_taskId: { warehouseId: scope.warehouseId, kind, taskId: ledger.id } } });
       if (existing) { if (existing.robotId !== robotId) throw new ConflictException('任务已由其他车辆领取'); return existing; }
       if (current.version !== row.version || current.tick !== row.tick || ledger.phase !== 'READY') throw new ConflictException('计算期间状态或阶段已变化，请重试');
@@ -255,7 +295,7 @@ export class FleetService implements OnModuleInit, OnModuleDestroy {
         await appendWarehouseEvent(tx, p.scope, 'FLEET_TICK', { tick: p.proposal.state.tick,
           resources: p.proposal.state.resources ?? [],
           navigation: navigationOf(p.proposal.state),
-          robots: p.proposal.state.robots.map((r) => ({ id: r.id, cell: r.simulation.robot.position, taskId: r.work?.taskId ?? null, phase: r.work?.phase ?? 'IDLE', waitTicks: r.waitTicks, waitReason: r.waitReason, resourceWaitId: r.resourceWaitId ?? null, blockerId: r.blockerId, navigationIssue: r.navigationIssue ?? null })) });
+          robots: p.proposal.state.robots.map((r) => ({ id: r.id, cell: r.simulation.robot.position, taskId: r.work?.taskId ?? null, phase: r.work?.phase ?? 'IDLE', waitTicks: r.waitTicks, waitReason: r.waitReason, resourceWaitId: r.resourceWaitId ?? null, blockerId: r.blockerId, navigationIssue: r.navigationIssue ?? null, deviceFault: r.deviceFault ?? null })) });
       }
       const now = await databaseNow(tx);
       if (row.leaseUntil! <= now) throw new FleetFenceConflict('批次执行期间租约已过期');

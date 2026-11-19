@@ -336,3 +336,92 @@ test('a real full-width cut pauses before pickup without a fake route, then reop
   assert.equal(resumed.robots[0].taskId, paused.robots[0].taskId); assert.equal(resumed.robots[0].navigationIssue, null);
   await reconciled();
 });
+// Day25: software fault controls serialize against take/drop and preserve ledger ownership.
+const control = (s, action, robotId = 'robot-1') => ({ robotId, action, expectedTaskId: s.robots.find((r) => r.id === robotId).taskId, reason: 'Day25 controlled fault test' });
+async function untilPhase(phase) {
+  let s = await service.read(scope);
+  for (let i = 0; i < 150 && s.robots[0].phase !== phase; i++) { await service.advance(); s = await service.read(scope); }
+  assert.equal(s.robots[0].phase, phase); return s;
+}
+for (const phase of ['APPROACH', 'LOADING', 'TRANSPORT', 'UNLOADING']) test(`Day25 ${phase} fault retains pose/cargo/permits and repair completes original claim once`, async () => {
+  const initial = await init(); await service.configure(scope, resourceCommand([{ id: 'park', kind: 'PARKING', cells: [initial.robots[0].to] }]));
+  await service.assign(scope, await input()); const before = await untilPhase(phase), old = await service.prepare(scope.warehouseId);
+  const paused = await service.control(scope, control(before, 'FAULT'));
+  assert.equal(paused.tick, before.tick); assert.deepEqual(paused.robots[0].to, before.robots[0].to); assert.equal(paused.robots[0].carrying, ['TRANSPORT', 'UNLOADING'].includes(phase));
+  assert.equal(paused.robots[0].recoveryStatus, paused.robots[0].carrying ? 'NEEDS_RECOVERY' : 'PAUSED');
+  await assert.rejects(service.commit(old), { status: 409 });
+  const raw = (await db.warehouseRuntime.findUniqueOrThrow({ where: { warehouseId: scope.warehouseId } })).fleet;
+  for (let i = 0; i < 12; i++) await service.advance();
+  const still = await other.read(scope); assert.deepEqual(still.robots[0].to, paused.robots[0].to); assert.equal(still.robots[0].battery, paused.robots[0].battery);
+  assert.equal(still.robots[0].taskId, paused.robots[0].taskId); assert.deepEqual(still.resources, paused.resources);
+  assert.deepEqual((await db.warehouseRuntime.findUniqueOrThrow({ where: { warehouseId: scope.warehouseId } })).fleet.state.robots[0].work, raw.state.robots[0].work);
+  if (paused.robots[0].carrying) {
+    await assert.rejects(service.control(scope, control(still, 'CANCEL')), { status: 409 });
+    const claim = await db.fleetClaim.findUniqueOrThrow({ where: { id: still.robots[0].taskId } });
+    await assert.rejects(db.transportTask.update({ where: { id: claim.taskId }, data: { phase: 'CANCELLED' } }));
+  }
+  await reconciled(); await service.control(scope, control(still, 'REPAIR'));
+  const done = await untilPhase('COMPLETED'); assert.equal(done.robots[0].taskId, before.robots[0].taskId);
+  assert.equal(await db.inventoryMovement.count({ where: { warehouseId: scope.warehouseId, businessKey: { startsWith: 'transport:' } } }), 2);
+  const snap = await snapshot(); await assert.rejects(service.control(scope, control(done, 'FAULT')), { status: 409 }); assert.deepEqual(await snapshot(), snap);
+  assert.equal(await db.auditLog.count({ where: { warehouseId: scope.warehouseId, action: { in: ['FLEET_FAULT', 'FLEET_REPAIR'] } } }), 2); await reconciled();
+});
+for (const phase of ['APPROACH', 'LOADING']) test(`Day25 ${phase} cancellation atomically releases source and target reservations, keeps physical occupancy and tombstones`, async () => {
+  const initial = await init(); await service.configure(scope, resourceCommand([{ id: 'park', kind: 'PARKING', cells: [initial.robots[0].to] }]));
+  const body = await input(); await service.assign(scope, body); const before = await untilPhase(phase), old = await service.prepare(scope.warehouseId);
+  const paused = await service.control(scope, control(before, 'FAULT'));
+  const cancelled = await service.control(scope, control(paused, 'CANCEL'));
+  assert.equal(cancelled.robots[0].phase, 'IDLE'); assert.equal(cancelled.robots[0].taskId, null); assert.ok(cancelled.robots[0].deviceFault);
+  assert.deepEqual(cancelled.robots[0].to, before.robots[0].to); assert.deepEqual(cancelled.resources, before.resources);
+  const claim = await db.fleetClaim.findUniqueOrThrow({ where: { id: before.robots[0].taskId } }); assert.equal(claim.active, false);
+  assert.equal((await db.transportTask.findUniqueOrThrow({ where: { id: claim.taskId } })).phase, 'CANCELLED');
+  assert.equal((await db.inventoryBalance.aggregate({ where: { warehouseId: scope.warehouseId }, _sum: { onHand: true, reserved: true } }))._sum.reserved, 0);
+  const [capacity] = await db.$queryRaw`SELECT staging_reserved(${staging.id}::uuid) AS used`; assert.equal(Number(capacity.used), 0);
+  await assert.rejects(service.commit(old), { status: 409 }); await assert.rejects(service.control(scope, control(paused, 'CANCEL')), { status: 409 });
+  await assert.rejects(service.assign(scope, body), { status: 409 });
+  await assert.rejects(new TransportService(db).take(scope, claim.taskId, 'reject cancelled task'), { status: 409 });
+  await service.control(scope, control(cancelled, 'REPAIR')); await service.assign(scope, await input()); await untilPhase('COMPLETED'); await reconciled();
+});
+test('Day25 control is scoped and an audit/event failure rolls back fault or cancellation and its reservation effects', async () => {
+  await init(); await service.assign(scope, await input()); const s = await service.read(scope), body = control(s, 'FAULT');
+  await assert.rejects(service.control(viewer, body), { status: 403 });
+  await assert.rejects(service.control({ ...scope, spaceId: ids.spaceB }, body), { status: 404 });
+  await assert.rejects(service.control(scope, { ...body, actorId: scope.actorId }), { status: 400 });
+  await assert.rejects(service.control(scope, { ...body, expectedTaskId: randomUUID() }), { status: 409 });
+  const before = await snapshot(), audits = await db.auditLog.count({ where: { warehouseId: scope.warehouseId } });
+  await db.$executeRawUnsafe(`CREATE FUNCTION day25_fail() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW."warehouseId"='${scope.warehouseId}'::uuid AND NEW.kind IN ('FLEET_FAULT','FLEET_CANCEL') THEN RAISE EXCEPTION 'injected recovery rollback'; END IF; RETURN NEW; END $$`);
+  await db.$executeRawUnsafe('CREATE TRIGGER day25_fail BEFORE INSERT ON "WarehouseEvent" FOR EACH ROW EXECUTE FUNCTION day25_fail()');
+  try {
+    for (const action of ['FAULT', 'CANCEL']) { await assert.rejects(service.control(scope, { ...body, action })); assert.deepEqual(await snapshot(), before); }
+    assert.equal(await db.auditLog.count({ where: { warehouseId: scope.warehouseId } }), audits);
+    assert.equal((await db.transportTask.findFirstOrThrow({ where: { warehouseId: scope.warehouseId } })).phase, 'READY');
+  } finally { await db.$executeRawUnsafe('DROP TRIGGER day25_fail ON "WarehouseEvent"'); await db.$executeRawUnsafe('DROP FUNCTION day25_fail()'); }
+  await reconciled();
+});
+async function putawayInput() {
+  const qc = await db.location.findFirstOrThrow({ where: { warehouseId: scope.warehouseId, kind: 'QC' } });
+  const receipt = await inbound.create(scope, { ...cmd(), skuId: batch.skuId, batchCode: batch.code, quantity: 1, qcLocationId: qc.id, producedAt: null, expiresAt: batch.expiresAt.toISOString() });
+  await inbound.phase(scope, receipt.id, 'receive', cmd()); await inbound.phase(scope, receipt.id, 'inspect', { ...cmd(), decision: 'PASS' });
+  const target = await db.location.findFirstOrThrow({ where: { warehouseId: scope.warehouseId, code: 'R02-3-L1' } });
+  return { kind: 'PUTAWAY', robotId: 'robot-1', inboundOrderId: receipt.id, targetLocationId: target.id, reason: 'Day25 putaway fixture' };
+}
+test('Day25 putaway cancellation frees QC and destination capacity without moving stock or deleting receipt history', async () => {
+  await init(); const body = await putawayInput(); await service.assign(scope, body); const s = await service.read(scope);
+  await service.control(scope, control(s, 'CANCEL'));
+  const task = await db.putawayTask.findUniqueOrThrow({ where: { inboundOrderId: body.inboundOrderId } }); assert.equal(task.phase, 'CANCELLED');
+  assert.equal((await db.inventoryBalance.aggregate({ where: { warehouseId: scope.warehouseId }, _sum: { onHand: true, reserved: true } }))._sum.reserved, 0);
+  const [capacity] = await db.$queryRaw`SELECT staging_reserved(${body.targetLocationId}::uuid) AS used`; assert.equal(Number(capacity.used), 0);
+  assert.equal(await db.inventoryMovement.count({ where: { warehouseId: scope.warehouseId, businessKey: { startsWith: 'putaway:' } } }), 0);
+  await assert.rejects(service.assign(scope, body), { status: 409 }); await reconciled();
+});
+test('Day25 loaded putaway repair posts only one original drop; a second loaded fault remains persisted for real PG restart checks', async () => {
+  await init(); await service.assign(scope, await putawayInput()); const s = await untilPhase('TRANSPORT');
+  const paused = await service.control(scope, control(s, 'FAULT')); assert.equal(paused.robots[0].recoveryStatus, 'NEEDS_RECOVERY');
+  await assert.rejects(service.control(scope, control(paused, 'CANCEL')), { status: 409 });
+  await service.control(scope, control(paused, 'REPAIR')); await untilPhase('COMPLETED');
+  assert.equal(await db.inventoryMovement.count({ where: { warehouseId: scope.warehouseId, businessKey: { startsWith: 'putaway:' } } }), 2);
+  await service.assign(scope, await input()); const outboundState = await untilPhase('TRANSPORT'); await service.control(scope, control(outboundState, 'FAULT'));
+  const successor = new FleetService(secondDb); await db.$executeRaw`UPDATE "WarehouseRuntime" SET "leaseUntil"=clock_timestamp()-interval '1 second' WHERE "warehouseId"=${scope.warehouseId}::uuid`;
+  const p = await successor.prepare(scope.warehouseId); await successor.commit(p); await successor.onModuleDestroy();
+  const recovered = await service.read(scope); assert.equal(recovered.robots[0].recoveryStatus, 'NEEDS_RECOVERY'); assert.deepEqual(recovered.robots[0].to, outboundState.robots[0].to); await reconciled();
+});

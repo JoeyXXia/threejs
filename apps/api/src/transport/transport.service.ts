@@ -93,6 +93,7 @@ export class TransportService {
         where: { id: taskId, spaceId: scope.spaceId, warehouseId: scope.warehouseId }, include: { allocation: true },
       });
       if (!task) throw new NotFoundException('运输任务不可访问');
+      if (task.phase === 'CANCELLED') throw new ConflictException('已取消任务不能取放');
       const taking = stage === 'take';
       if (task.phase === 'STAGED' || (taking && task.phase === 'IN_TRANSIT')) return task;
       if (!taking && task.phase !== 'IN_TRANSIT') throw new ConflictException('尚未取货');
@@ -115,6 +116,17 @@ export class TransportService {
       await this.audit(tx, scope, taking ? 'TRANSPORT_TAKEN' : 'TRANSPORT_DROPPED', taskId, note,
         { phase: task.phase }, { phase: updated.phase, source, destination, quantity });
       return updated;
+  }
+
+  // Internal composition: caller owns write ACL and warehouse/runtime locks.
+  async cancelInTransaction(tx: Tx, scope: Scope, taskId: string, reason: string) {
+    const task = await tx.transportTask.findFirst({ where: { id: taskId, spaceId: scope.spaceId, warehouseId: scope.warehouseId }, include: { allocation: true } });
+    if (!task || task.phase !== 'READY') throw new ConflictException('只能取消未取货运输');
+    const changed = await tx.inventoryBalance.updateMany({ where: { id: task.allocation.balanceId, reserved: { gte: task.allocation.quantity } },
+      data: { reserved: { decrement: task.allocation.quantity }, version: { increment: 1 } } });
+    if (changed.count !== 1) throw new ConflictException('来源预占不一致');
+    await tx.transportTask.update({ where: { id: taskId }, data: { phase: 'CANCELLED' } });
+    await this.audit(tx, scope, 'TRANSPORT_CANCELLED', taskId, reason, { phase: 'READY' }, { phase: 'CANCELLED' });
   }
 
   dispatch(scope: Scope, orderId: string, reason: string) {
