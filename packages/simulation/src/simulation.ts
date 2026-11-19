@@ -91,16 +91,17 @@ export function applyCommand(state: SimulationState, command: Command): Simulati
   }
 }
 
-export function step(state: SimulationState): SimulationState {
+export function step(state: SimulationState, movementCost = 1): SimulationState {
   if (state.paused) return state;
   integer(state.logicalTimeMs + state.tickMs, 0, Number.MAX_SAFE_INTEGER, 'logical clock overflow');
   let robot = state.robot;
   if (robot.status === 'MOVING') {
+    integer(movementCost, 1, 10000, 'movement cost');
     const position = robot.path[robot.next]!;
     const dx = position.x - robot.position.x;
     const dz = position.z - robot.position.z;
     const direction: Direction = dx > 0 ? 'E' : dx < 0 ? 'W' : dz > 0 ? 'S' : 'N';
-    const battery = robot.battery - 1;
+    const battery = Math.max(0, robot.battery - movementCost);
     const next = robot.next + 1;
     robot = Object.freeze({ ...robot, position, direction, battery, next,
       status: battery === 0 ? 'DEPLETED' : next === robot.path.length ? 'IDLE' : 'MOVING' });

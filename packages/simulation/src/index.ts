@@ -6,3 +6,4 @@ export * from './fleet.js';
 export * from './resources.js';
 export * from './navigation.js';
 export * from './recovery.js';
+export * from './energy.js';

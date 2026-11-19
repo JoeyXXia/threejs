@@ -40,7 +40,7 @@ export function configureResources(state: FleetState, definitions: readonly Reso
     if (JSON.stringify(state.resources) !== JSON.stringify(resources)) throw new Error('resource configuration is immutable');
     return state;
   }
-  if (!resources.length || state.robots.some((r) => r.work && !['COMPLETED', 'ERROR'].includes(r.work.phase))) throw new Error('configure a nonempty resource set before active work');
+  if (!resources.length || state.robots.some((r) => r.charge || (r.work && !['COMPLETED', 'ERROR'].includes(r.work.phase)))) throw new Error('configure a nonempty resource set before active work');
   return result;
 }
 

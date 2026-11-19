@@ -38,6 +38,7 @@ export function changeNavigation(state: FleetState, cells: readonly Cell[], clos
   const closed = [...desired.values()].sort((a, b) => a.z - b.z || a.x - b.x);
   if (JSON.stringify([...old.closed].sort((a, b) => a.z - b.z || a.x - b.x)) === JSON.stringify(closed)) return state;
   const navigation = { revision: old.revision + 1, closed }, walls = new Set([...map.blocked, ...closed].map(key));
+  if (state.robots.some((r) => r.charge && r.simulation.robot.path.slice(r.simulation.robot.next).some((p) => walls.has(key(p))))) throw new Error('stop charge route before closing');
   const grid = { ...map, version: navigation.revision, walkable: (p: Cell) => p.x >= 0 && p.z >= 0 && p.x < map.width && p.z < map.depth && !walls.has(key(p)) };
   const budget = { maxExpanded: options.maxExpanded ?? 2000, timeoutMs: options.timeoutMs ?? 10 };
   const robots = state.robots.map((r): FleetRobot => {

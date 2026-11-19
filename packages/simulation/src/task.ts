@@ -19,9 +19,9 @@ export function createRobotTask(simulation: SimulationState, approachPath: reado
 }
 
 // Effects are proposals. The caller commits the ledger effect before publishing the returned state.
-export function stepRobotTask(task: RobotTask): { task: RobotTask; effect: 'take' | 'drop' | null } {
+export function stepRobotTask(task: RobotTask, movementCost = 1): { task: RobotTask; effect: 'take' | 'drop' | null } {
   if (task.phase === 'COMPLETED' || task.phase === 'ERROR' || task.simulation.paused) return { task, effect: null };
-  let simulation = step(task.simulation);
+  let simulation = step(task.simulation, movementCost);
   let phase: TransportPhase = task.phase;
   let phaseTicks = task.phaseTicks + 1;
   let effect: 'take' | 'drop' | null = null;
