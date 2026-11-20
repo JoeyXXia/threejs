@@ -2,6 +2,9 @@ const { after, beforeEach, test } = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
 const { writeFileSync } = require('node:fs');
+const { fork } = require('node:child_process');
+const { resolve } = require('node:path');
+const { setTimeout: delay } = require('node:timers/promises');
 const { PrismaClient, reconcileWarehouse } = require('../../packages/database');
 const { ids } = require('../../packages/database/seed.cjs');
 const { seedInventory } = require('../../packages/database/seed-inventory.cjs');
@@ -491,4 +494,193 @@ test('Day26 loaded low energy stops without cargo ledger writes, and publishes o
   const ticks = await db.warehouseEvent.findMany({ where: { warehouseId: scope.warehouseId, kind: 'FLEET_TICK' } });
   assert.deepEqual(ticks.flatMap((e) => e.payload.newAlerts), s.alerts);
   await reconciled();
+});
+
+function startFleetChild(t) {
+  const child = fork(resolve(__dirname, 'fixtures/fleet-runner.cjs'), [], { windowsHide: true, execArgv: [],
+    stdio: ['ignore', 'ignore', 'inherit', 'ipc'] });
+  let requestId = 0;
+  const exited = new Promise((res) => {
+    child.once('close', (code, signal) => res({ code, signal }));
+    child.once('error', () => res({ code: -1, signal: null }));
+  });
+  async function response(match, send) {
+    let timer, listener, closed, failed;
+    try {
+      return await new Promise((res, rej) => {
+        listener = (message) => { if (match(message)) res(message); };
+        closed = () => rej(new Error('Fleet child exited before IPC response'));
+        failed = rej;
+        child.on('message', listener); child.once('close', closed); child.once('error', failed);
+        timer = setTimeout(() => rej(new Error('Fleet child IPC timeout')), 20000);
+        if (send) child.send(send, (error) => { if (error) rej(error); });
+      });
+    } finally {
+      clearTimeout(timer); child.off('message', listener); child.off('close', closed); child.off('error', failed);
+    }
+  }
+  async function stop() {
+    if (child.exitCode === null && child.signalCode === null) assert.ok(child.kill('SIGKILL'));
+    return exited;
+  }
+  t.after(stop);
+  const ready = response((m) => m.ready === true).then((m) => assert.equal(m.pid, child.pid));
+  return { pid: child.pid, ready, stop, async call(op, body) {
+    const id = ++requestId, r = await response((m) => m.id === id, { id, op, scope, body });
+    if (r.error) throw Object.assign(new Error(r.error.message), { status: r.error.status });
+    return r.data;
+  } };
+}
+
+test('Day27 five robots across actual process exits: durable claim, take and drop edges, natural lease takeover and exactly-once ledger', { timeout: 155000 }, async (t) => {
+  const initial = await init(5), request = await input();
+  const [allocation, dock] = await Promise.all([
+    db.allocation.findUniqueOrThrow({ where: { id: request.allocationId } }),
+    db.layoutLocation.findFirstOrThrow({ where: { warehouseId: scope.warehouseId, locationId: staging.id } }),
+  ]);
+  const pickup = await db.layoutLocation.findFirstOrThrow({ where: { warehouseId: scope.warehouseId, locationId: allocation.locationId } });
+  await service.configure(scope, resourceCommand([
+    { id: 'pickup', kind: 'WORKSTATION', cells: [{ x: pickup.serviceX, z: pickup.serviceZ }] },
+    { id: 'drop', kind: 'WORKSTATION', cells: [{ x: dock.serviceX, z: dock.serviceZ }] },
+  ]));
+  const edges = [], recoveries = [];
+  const row = () => db.warehouseRuntime.findUniqueOrThrow({ where: { warehouseId: scope.warehouseId } });
+  const start = async () => { const child = startFleetChild(t); await child.ready; return child; };
+  const durable = async () => {
+    const s = await snapshot();
+    const { fleet, tick, seq, version } = s.runtime;
+    return { fleet, tick, seq, version, claims: s.claims, balances: s.balances, movements: s.movements, events: s.events };
+  };
+  const stopAt = async (child, edge) => {
+    const r = await row(), from = await durable(), status = await child.stop();
+    assert.equal(status.signal, 'SIGKILL');
+    assert.deepEqual(await durable(), from, edge + ' changed committed state on exit');
+    const raw = await row();
+    assert.equal(raw.ownerId, r.ownerId); assert.equal(raw.epoch, r.epoch); assert.deepEqual(raw.leaseUntil, r.leaseUntil);
+    edges.push({ edge, pid: child.pid, signal: status.signal, tick: r.tick, epoch: r.epoch, watermark: r.seq,
+      claims: from.claims.map((c) => ({ robot: c.robotId, active: c.active, loaded: c.loaded })),
+      permits: r.fleet.state.resources.map((r) => [r.id, r.ownerId]) });
+  };
+  const acquire = async (child, before) => {
+    const baseline = await durable();
+    const deadline = Date.now() + 12000;
+    let p;
+    do { p = await child.call('prepare'); if (!p) await delay(125); } while (!p && Date.now() < deadline);
+    assert.ok(p, 'lease did not expire naturally');
+    assert.equal(p.tick, before.tick);
+    assert.equal(p.version, before.version); assert.equal(p.epoch, before.epoch + 1);
+    assert.notEqual(p.ownerId, before.ownerId);
+    assert.deepEqual(await durable(), baseline, 'preparation changed committed state');
+    recoveries.push({ recoveredTick: p.tick, firstCommitTick: null, oldEpoch: before.epoch, newEpoch: p.epoch });
+    return p;
+  };
+  const commit = async (child, prepared) => {
+    await child.call('commit');
+    const current = await row();
+    assert.equal(current.tick, prepared.tick + 1); assert.equal(current.epoch, prepared.epoch);
+    const recent = recoveries.at(-1);
+    if (recent && recent.newEpoch === prepared.epoch && recent.firstCommitTick === null) recent.firstCommitTick = current.tick;
+  };
+  const seek = async (child, select, first) => {
+    for (let i = 0; i < 100; i++) {
+      const p = i === 0 && first ? first : await child.call('prepare');
+      assert.ok(p, 'runner unexpectedly inactive');
+      if (await select(p)) return p;
+      await commit(child, p);
+    }
+    assert.fail('edge not reached');
+  };
+  const effect = (c, stage) => (p) => p.effects.some((e) => e.taskId === c.id && e.stage === stage);
+  let child = await start();
+  assert.equal(await db.fleetClaim.count({ where: { warehouseId: scope.warehouseId } }), 0);
+  await stopAt(child, 'before-claim'); // The fixture has not sent the assignment command.
+  child = await start();
+  const claim = await child.call('assign', request);
+  assert.equal((await service.read(scope)).robots[0].taskId, claim.id);
+  await stopAt(child, 'after-claim');
+  child = await start();
+  assert.equal((await child.call('assign', request)).id, claim.id);
+  const beforeTake = await seek(child, effect(claim, 'take'));
+  assert.equal((await service.read(scope)).robots[0].carrying, false);
+  const contender = await start();
+  assert.equal(await contender.call('prepare'), null, 'live lease admitted a second runner');
+  const takeover = await acquire(contender, await row());
+  assert.equal(takeover.tick, beforeTake.tick); assert.ok(effect(claim, 'take')(takeover));
+  const fenced = await durable();
+  await assert.rejects(child.call('commit'), { status: 409 });
+  assert.deepEqual(await durable(), fenced);
+  assert.equal((await child.stop()).signal, 'SIGKILL');
+  const preTakeRow = await row();
+  await stopAt(contender, 'before-take'); // Replacement also dies holding the uncommitted take proposal.
+  child = await start();
+  const take = await acquire(child, preTakeRow);
+  assert.ok(effect(claim, 'take')(take)); await commit(child, take);
+  assert.equal((await service.read(scope)).robots[0].carrying, true);
+  const postTakeRow = await row();
+  await stopAt(child, 'after-take');
+  child = await start();
+  const fromTake = await acquire(child, postTakeRow); await commit(child, fromTake);
+  for (let i = 0; i < 100 && (await service.read(scope)).robots[0].phase !== 'UNLOADING'; i++) {
+    await commit(child, await child.call('prepare'));
+  }
+  assert.equal((await service.read(scope)).robots[0].phase, 'UNLOADING');
+  const second = await child.call('assign', { ...await putawayInput(), robotId: 'robot-2' });
+  const drop = await seek(child, effect(claim, 'drop'));
+  assert.equal(await db.fleetClaim.count({ where: { warehouseId: scope.warehouseId, active: true } }), 2);
+  const preDropRow = await row();
+  await stopAt(child, 'before-drop');
+  child = await start();
+  const retryDrop = await acquire(child, preDropRow);
+  assert.ok(effect(claim, 'drop')(retryDrop)); assert.equal(retryDrop.tick, drop.tick);
+  await commit(child, retryDrop);
+  const dropped = await service.read(scope);
+  assert.equal(dropped.robots[0].phase, 'COMPLETED'); assert.equal(dropped.robots[0].carrying, false);
+  assert.equal(dropped.resources.find((r) => r.id === 'drop').ownerId, 'robot-1');
+  const postDropRow = await row();
+  await stopAt(child, 'after-drop');
+  child = await start();
+  const fromDrop = await acquire(child, postDropRow); await commit(child, fromDrop);
+  for (let i = 0; i < 120; i++) {
+    const p = await child.call('prepare'); if (!p) break; await commit(child, p);
+  }
+  const final = await service.read(scope);
+  assert.deepEqual(final.robots.map((r) => r.phase), ['COMPLETED', 'COMPLETED', 'IDLE', 'IDLE', 'IDLE']);
+  assert.deepEqual(final.robots.slice(0, 2).map((r) => r.taskId), [claim.id, second.id]);
+  assert.ok(final.robots.every((r) => !r.carrying));
+  assert.equal((await child.stop()).signal, 'SIGKILL');
+  const movements = await db.inventoryMovement.findMany({ where: { warehouseId: scope.warehouseId, OR: [
+    { businessKey: { startsWith: 'transport:' } }, { businessKey: { startsWith: 'putaway:' } }] }, select: { businessKey: true } });
+  assert.deepEqual(movements.map((m) => m.businessKey).sort(),
+    ['take', 'drop'].flatMap((stage) => ['transport:' + claim.taskId + ':' + stage, 'putaway:' + second.taskId + ':' + stage]).sort());
+  const allClaims = await db.fleetClaim.findMany({ where: { warehouseId: scope.warehouseId } });
+  assert.equal(allClaims.length, 2); assert.ok(allClaims.every((c) => !c.active && !c.loaded));
+  const events = await db.warehouseEvent.findMany({ where: { warehouseId: scope.warehouseId }, orderBy: { seq: 'asc' } });
+  assert.deepEqual(events.map((e) => e.seq), Array.from({ length: final.watermark }, (_, i) => i + 1));
+  assert.equal(events.filter((e) => e.kind === 'FLEET_ASSIGNED').length, 2);
+  const ticks = events.filter((e) => e.kind === 'FLEET_TICK');
+  assert.deepEqual(ticks.map((e) => e.payload.tick), Array.from({ length: final.tick }, (_, i) => i + 1));
+  let last = new Map(initial.robots.map((r) => [r.id, r.to]));
+  const walls = (await row()).fleet.state.robots[0].simulation.map.blocked;
+  const cell = (p) => p.x + ':' + p.z;
+  for (const { payload } of ticks) {
+    const positions = payload.robots.map((r) => cell(r.cell));
+    assert.equal(positions.length, 5); assert.equal(new Set(positions).size, 5);
+    for (const r of payload.robots) {
+      const p = last.get(r.id);
+      assert.ok(Math.abs(p.x - r.cell.x) + Math.abs(p.z - r.cell.z) <= 1);
+      assert.ok(!walls.some((p) => cell(p) === cell(r.cell)));
+      for (const [otherId, otherCell] of last) if (otherId !== r.id) assert.notEqual(cell(r.cell), cell(otherCell));
+    }
+    for (const p of payload.resources) {
+      const owners = payload.robots.filter((r) => p.cells.some((c) => cell(c) === cell(r.cell)));
+      assert.ok(owners.length <= 1); assert.equal(p.ownerId, owners[0]?.id ?? null);
+    }
+    last = new Map(payload.robots.map((r) => [r.id, r.cell]));
+  }
+  await reconciled();
+  writeFileSync(resolve(__dirname, '../../reports/day27-process-restart.json'), JSON.stringify({
+    capturedAt: new Date().toISOString(), edges, recoveries, liveLeaseDenied: true, staleCommitStatus: 409,
+    robots: final.robots.length, finalTick: final.tick, watermark: final.watermark, claims: allClaims.length, movements: movements.length,
+    collisionTicks: ticks.length, reconciled: true,
+  }, null, 2));
 });
