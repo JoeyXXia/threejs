@@ -14,9 +14,10 @@
     "@nestjs/platform-express": "12.2.0",
     "@warehouse-twin/contracts": "workspace:*",
     "@warehouse-twin/database": "workspace:*",
+    "@warehouse-twin/simulation": "workspace:*",
     "reflect-metadata": "0.2.2",
     "rxjs": "7.8.2",
-    "@warehouse-twin/simulation": "workspace:*"
+    "socket.io": "4.8.3"
   },
   "devDependencies": {
     "@types/express": "5.0.6",

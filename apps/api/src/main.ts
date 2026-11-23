@@ -4,6 +4,8 @@ import { existsSync } from 'node:fs';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { configure } from './configure';
+import { WarehouseGateway } from './realtime/warehouse.gateway';
+import type { Server } from 'node:http';
 
 async function bootstrap() {
   // Both workspace dev and package start run with apps/api as cwd.
@@ -15,6 +17,7 @@ async function bootstrap() {
   }
   const app = await NestFactory.create(AppModule);
   configure(app);
+  app.get(WarehouseGateway).attach(app.getHttpServer() as Server);
   app.enableShutdownHooks();
   await app.listen(port, process.env.API_HOST ?? '127.0.0.1');
 }

@@ -15,6 +15,7 @@ import { useSimulation } from './robot-data';
 import { FleetPanel } from './FleetPanel';
 import { useFleet } from './fleet-data';
 import { RobotPanel } from './RobotPanel';
+import { RealtimeStatus } from './RealtimeStatus';
 
 const WarehouseScene = lazy(() => import('./WarehouseScene').then((module) => ({ default: module.WarehouseScene })));
 
@@ -61,6 +62,7 @@ export function WarehouseView({ userId, spaceId, warehouseId, name, onUnauthoriz
   return <section className="workspace" aria-label="仓库场景">
     <div className="view-heading"><div><p className="eyebrow">数据驱动 / 软件模拟设备</p><h1>{name}</h1></div>
       <button disabled={query.isFetching} onClick={() => { void query.refetch(); }}>刷新数据</button></div>
+    <RealtimeStatus userId={userId} spaceId={spaceId} warehouseId={warehouseId} onUnauthorized={onUnauthorized} />
     {query.isPending ? <p role="status" className="empty-state">正在读取布局和库存…</p>
       : query.isError ? <div role="alert" className="error-state"><h2>仓库数据不可用</h2><p>{query.error.message}</p><p>场景与旧汇总已隐藏；不会使用默认库存。</p><button onClick={() => { void query.refetch(); }}>重试读取</button></div>
         : <>
@@ -129,7 +131,7 @@ export function WarehouseView({ userId, spaceId, warehouseId, name, onUnauthoriz
           <InventoryDetails view={selected} onClose={() => ui.selectLocation(null)} />
           <ul className="zone-legend" aria-label="区域图例">{Object.entries(zoneAppearance).map(([kind, value]) => <li key={kind}><i style={{ background: value.color }} />{value.name}</li>)}</ul>
           <p className="view-note">点选货位查看详情，拖动旋转，滚轮缩放。线框为空位；货位在货架内，地面圆环是服务点。无 WebGL 时可直接使用 2D 库存列表。</p>
-          <p className="view-note">画面由 API 数据生成，设备为软件模拟；机器人使用持久检查点，状态暂用轮询，尚无实时推送。</p>
+          <p className="view-note">设备为软件模拟。实时事件来自已提交状态；画面仍从 HTTP 检查点刷新。</p>
         </>}
   </section>;
 }

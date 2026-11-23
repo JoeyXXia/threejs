@@ -107,7 +107,7 @@ export class SimulationService implements OnModuleInit, OnModuleDestroy {
       const events = await tx.warehouseEvent.findMany({ where: { spaceId: scope.spaceId, warehouseId: scope.warehouseId,
         seq: { gt: after, lte: watermark } }, orderBy: { seq: 'asc' }, take: 100 });
       return { spaceId: scope.spaceId, warehouseId: scope.warehouseId, after, watermark,
-        events: events.map((e) => ({ seq: e.seq, tick: e.tick, kind: e.kind, payload: e.payload, createdAt: e.createdAt.toISOString() })),
+        events: events.map((e) => ({ seq: e.seq, version: e.version, epoch: e.epoch, tick: e.tick, kind: e.kind, payload: e.payload, createdAt: e.createdAt.toISOString() })),
         hasMore: (events.at(-1)?.seq ?? after) < watermark };
     }, { isolationLevel: 'RepeatableRead' });
   }

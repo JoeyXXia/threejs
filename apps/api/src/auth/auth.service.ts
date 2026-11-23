@@ -2,6 +2,7 @@ import { HttpException, Inject, Injectable, UnauthorizedException } from '@nestj
 import { createHash, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import { DatabaseService } from '../database.service';
+import type { Prisma } from '@warehouse-twin/database';
 
 const derive = promisify(scrypt);
 export const cookieName = 'wt_session';
@@ -45,10 +46,10 @@ export class AuthService {
     return token && /^[0-9a-f]{64}$/.test(token) ? token : undefined;
   }
 
-  async identity(cookie: string | undefined): Promise<Identity> {
+  async identity(cookie: string | undefined, db: Pick<Prisma.TransactionClient, 'session'> = this.db): Promise<Identity> {
     const token = this.token(cookie);
     if (!token) throw new UnauthorizedException();
-    const session = await this.db.session.findUnique({ where: { tokenHash: digest(token) }, include: { user: true } });
+    const session = await db.session.findUnique({ where: { tokenHash: digest(token) }, include: { user: true } });
     if (!session || session.expiresAt.getTime() <= Date.now()) throw new UnauthorizedException();
     return { userId: session.userId, email: session.user.email, expiresAt: session.expiresAt };
   }

@@ -19,9 +19,10 @@ import { FleetService } from './simulation/fleet.service';
 import { FleetController } from './simulation/fleet.controller';
 import { SimulationService } from './simulation/simulation.service';
 import { SimulationController } from './simulation/simulation.controller';
+import { WarehouseGateway } from './realtime/warehouse.gateway';
 
 @Module({
   controllers: [HealthController, AuthController, WarehouseController, InventoryController, InboundController, OutboundController, CountController, WmsController, SimulationController, FleetController],
-  providers: [DatabaseService, AuthService, AuthGuard, InboundService, OutboundService, TransportService, PutawayService, CountService, SimulationService, FleetService],
+  providers: [DatabaseService, AuthService, AuthGuard, InboundService, OutboundService, TransportService, PutawayService, CountService, SimulationService, FleetService, WarehouseGateway],
 })
 export class AppModule {}

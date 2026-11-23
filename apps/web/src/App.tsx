@@ -172,6 +172,6 @@ export function App() {
         <Route path="*" element={<section className="error-state"><h1>页面不存在</h1><Link to="/">返回仓库</Link></section>} />
       </Routes></div>
     </>}
-    <footer>WarehouseTwin · WMS 数据驱动的仓库演示。设备为软件模拟；后端使用持久检查点，状态暂用轮询，尚无实时推送。</footer>
+    <footer>WarehouseTwin · WMS 数据驱动的仓库演示。设备为软件模拟；仓库页订阅已提交事件，HTTP 快照仍为展示依据。</footer>
   </main>;
 }

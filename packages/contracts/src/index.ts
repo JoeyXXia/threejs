@@ -7,6 +7,24 @@ const kind = z.enum(['INBOUND', 'QC', 'STORAGE', 'PICKING', 'OUTBOUND', 'CHARGIN
 const rect = { gridX: quantity, gridZ: quantity, sizeX: z.number().int().positive(), sizeZ: z.number().int().positive() };
 const totals = { onHand: quantity, reserved: quantity, available: quantity };
 
+export const warehouseSocketPath = '/socket.io';
+const eventCursor = quantity.max(2147483647);
+const realtimeScope = { spaceId: id, warehouseId: id };
+export const realtimeSubscribeSchema = z.strictObject({ ...realtimeScope, after: eventCursor.optional() });
+export const realtimeAckSchema = z.union([
+  z.object({ ok: z.literal(true), after: eventCursor }),
+  z.object({ ok: z.literal(false), code: z.enum(['BAD_REQUEST', 'UNAUTHORIZED', 'NOT_FOUND', 'CURSOR_AHEAD', 'BUSY', 'UNAVAILABLE']) }),
+]);
+const warehouseEvent = z.object({
+  seq: eventCursor.positive(), version: eventCursor.nullable(), epoch: eventCursor.nullable(), tick: eventCursor,
+  kind: z.string(), payload: z.unknown(), createdAt: z.string().datetime(),
+});
+export const realtimeBatchSchema = z.object({
+  ...realtimeScope,
+  events: z.array(warehouseEvent).min(1).max(100),
+});
+export type RealtimeAck = z.infer<typeof realtimeAckSchema>;
+
 export const movementKindSchema = z.enum(['OPENING', 'RECEIPT', 'TRANSFER', 'DISPATCH', 'COUNT_ADJUSTMENT']);
 const wmsScope = { spaceId: id, warehouseId: id, asOf: z.string().datetime() };
 const wmsBatch = z.object({ id, code: z.string(), skuCode: z.string(), expiresAt: z.string().datetime().nullable() });
@@ -289,7 +307,7 @@ export const robotCheckpointSchema = z.object({
 });
 export const warehouseEventsSchema = z.object({
   spaceId: id, warehouseId: id, after: quantity, watermark: quantity,
-  events: z.array(z.object({ seq: z.number().int().positive(), tick: quantity, kind: z.string(), payload: z.unknown(), createdAt: z.string().datetime() })),
+  events: z.array(warehouseEvent).max(100),
   hasMore: z.boolean(),
 }).superRefine((value, ctx) => {
   const last = value.events.at(-1)?.seq ?? value.after;

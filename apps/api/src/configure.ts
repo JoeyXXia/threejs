@@ -15,9 +15,11 @@ class SafeErrors implements ExceptionFilter {
   }
 }
 
+export const webOrigins = () => new Set((process.env.WEB_ORIGINS ?? 'http://127.0.0.1:5173,http://localhost:5173').split(','));
+
 export function configure(app: INestApplication) {
   app.useGlobalFilters(new SafeErrors());
-  const origins = new Set((process.env.WEB_ORIGINS ?? 'http://127.0.0.1:5173,http://localhost:5173').split(','));
+  const origins = webOrigins();
   app.use((req: Request, res: Response, next: NextFunction) => {
     res.setHeader('Cache-Control', 'no-store');
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {

@@ -15,7 +15,9 @@ const password = randomBytes(24).toString('hex');
 const databaseUrl = `postgresql://warehouse:${password}@127.0.0.1:15432/warehouse_twin_test`;
 const inboundDatabaseUrl = `postgresql://warehouse:${password}@127.0.0.1:15432/warehouse_twin_inbound_test`;
 const upgradeDatabaseUrl = `postgresql://warehouse:${password}@127.0.0.1:15432/warehouse_twin_upgrade_test`;
+const realtimeDatabaseUrl = `postgresql://warehouse:${password}@127.0.0.1:15432/warehouse_twin_realtime_test`;
 const env = { ...process.env, DATABASE_URL: databaseUrl, TEST_DATABASE_URL: databaseUrl, INBOUND_TEST_DATABASE_URL: inboundDatabaseUrl,
+  REALTIME_TEST_DATABASE_URL: realtimeDatabaseUrl,
   DEMO_PASSWORD: randomBytes(16).toString('hex'), NODE_ENV: 'test', SESSION_TTL_SECONDS: '3600', SESSION_SECURE: 'false',
   WEB_ORIGINS: 'http://127.0.0.1:5173,http://localhost:5173' };
 mkdirSync(`${root}/.local`, { recursive: true });
@@ -50,14 +52,19 @@ try {
   await run(['seed.cjs'], `${root}/packages/database`, inboundEnv);
   await pg.createDatabase('warehouse_twin_upgrade_test');
   await run(['scripts/runtime-upgrade-check.mjs'], root, { ...env, UPGRADE_TEST_DATABASE_URL: upgradeDatabaseUrl });
+  // The real API starts its own runners; never point it at direct/manual tick fixtures.
+  await pg.createDatabase('warehouse_twin_realtime_test');
+  const realtimeEnv = { ...env, DATABASE_URL: realtimeDatabaseUrl };
+  await run(['node_modules/prisma/build/index.js', 'migrate', 'deploy'], `${root}/packages/database`, realtimeEnv);
+  await run(['seed.cjs'], `${root}/packages/database`, realtimeEnv);
   // Use Node's normal module loader for direct imports of the Nest domain services.
   await run(['--test', '--test-reporter=spec', '--test-reporter-destination=stdout',
-    '--test-reporter=tap', '--test-reporter-destination=reports/integration-transport.tap', 'tests/transport/transport.test.cjs', 'tests/transport/simulation.test.cjs', 'tests/transport/putaway.test.cjs', 'tests/transport/fleet.test.cjs']);
+    '--test-reporter=tap', '--test-reporter-destination=reports/integration-transport.tap', 'tests/transport/transport.test.cjs', 'tests/transport/simulation.test.cjs', 'tests/transport/putaway.test.cjs', 'tests/transport/fleet.test.cjs', 'tests/transport/realtime.test.cjs']);
   await run(['node_modules/jest/bin/jest.js', '--config', 'tests/integration/jest.config.cjs', '--runInBand', '--json', '--outputFile', 'reports/integration-jest.json']);
   // Verify persisted rows after a real database restart, once all HTTP test processes have closed.
   await pg.stop(); await pg.start();
   const results = [];
-  for (const datasourceUrl of [databaseUrl, inboundDatabaseUrl, upgradeDatabaseUrl]) {
+  for (const datasourceUrl of [databaseUrl, inboundDatabaseUrl, upgradeDatabaseUrl, realtimeDatabaseUrl]) {
   const db = new database.PrismaClient({ datasourceUrl });
   try {
     const evidence = await db.$transaction(async (tx) => {

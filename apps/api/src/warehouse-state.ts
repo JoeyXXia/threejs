@@ -19,7 +19,8 @@ export async function lockWarehouseState(tx: Prisma.TransactionClient, scope: Wa
 export async function appendWarehouseEvent(tx: Prisma.TransactionClient, scope: WarehouseScope, kind: string, payload: Prisma.InputJsonValue) {
   const runtime = await tx.warehouseRuntime.update({ where: { warehouseId: scope.warehouseId },
     data: { seq: { increment: 1 }, version: { increment: 1 } } });
-  await tx.warehouseEvent.create({ data: { spaceId: scope.spaceId, warehouseId: scope.warehouseId, seq: runtime.seq, tick: runtime.tick, kind, payload } });
+  await tx.warehouseEvent.create({ data: { spaceId: scope.spaceId, warehouseId: scope.warehouseId, seq: runtime.seq,
+    tick: runtime.tick, version: runtime.version, epoch: runtime.epoch, kind, payload } });
   return runtime.seq;
 }
 

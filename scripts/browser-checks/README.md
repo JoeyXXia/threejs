@@ -266,3 +266,7 @@ pw28 close
 ```
 
 录前将浏览器视口设为 1440×1100（可在登录脚本里 `await page.setViewportSize({ width: 1440, height: 1100 })`）。脚本走真实授权 API 布置与操作两单和五车，通过原应用场景录制；字幕由脚本读取已提交快照，不是新增产品 UI。用本地浏览器打开生成的 WebM，确认六段均可播放、字幕完整，再归档；失败片段和原始日志留本地。验收结束在 QA 启动终端输入 `stop`。
+
+## Day 29 双浏览器实时订阅
+
+按上节启动全新隔离 QA，并登录测试管理员。使用 Playwright CLI 执行 `run-code --filename scripts/browser-checks/day29-realtime.js`；脚本复制隔离测试会话到第二个 Chrome 上下文，检查独立 WebSocket 收到相同序列并自动刷新预占，随后退出并断言两个连接清理。权限、回滚与补发的独立会话用例见 [Day29 验收](../../reports/day-29-acceptance.md)。

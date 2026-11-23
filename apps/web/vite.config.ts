@@ -13,6 +13,7 @@ export default defineConfig(({ mode }) => {
       port: 5173,
       strictPort: true,
       proxy: {
+        '/socket.io': { target: env.API_PROXY_TARGET ?? 'http://127.0.0.1:3000', ws: true },
         '/api': {
           target: env.API_PROXY_TARGET ?? 'http://127.0.0.1:3000',
           rewrite: (path) => path.replace(/^\/api/, ''),

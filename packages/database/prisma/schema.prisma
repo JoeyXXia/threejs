@@ -95,6 +95,8 @@ model WarehouseEvent {
   spaceId String @db.Uuid
   seq Int
   tick Int
+  version Int?
+  epoch Int?
   kind String
   payload Json
   createdAt DateTime @default(now()) @db.Timestamptz(3)

@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { robotCheckpointSchema, simulationResponseSchema, warehouseEventsSchema } from '@warehouse-twin/contracts';
+import { realtimeBatchSchema, robotCheckpointSchema, simulationResponseSchema, warehouseEventsSchema } from '@warehouse-twin/contracts';
 import { createRobotTask, createSimulation } from '@warehouse-twin/simulation';
 import { fixtureId } from './test-fixtures';
 
@@ -36,10 +36,17 @@ it('reads legacy outbound checkpoints and separates putaway receipt identity fro
 });
 it('requires contiguous ordered events bounded by a committed watermark', () => {
   const data = { spaceId: fixtureId(1), warehouseId: fixtureId(2), after: 3, watermark: 6, hasMore: true,
-    events: [{ seq: 4, tick: 2, kind: 'SIM_TICK', payload: {}, createdAt: '2026-11-13T01:00:00.000Z' }] };
+    events: [{ seq: 4, version: 4, epoch: 1, tick: 2, kind: 'SIM_TICK', payload: {}, createdAt: '2026-11-13T01:00:00.000Z' }] };
   expect(warehouseEventsSchema.safeParse(data).success).toBe(true);
   expect(warehouseEventsSchema.safeParse({ ...data, hasMore: false }).success).toBe(false);
   expect(warehouseEventsSchema.safeParse({ ...data, events: [{ ...data.events[0], seq: 5 }] }).success).toBe(false);
   expect(warehouseEventsSchema.safeParse({ ...data, watermark: 3 }).success).toBe(false);
   expect(warehouseEventsSchema.safeParse({ ...data, events: [data.events[0], data.events[0]] }).success).toBe(false);
+});
+it('accepts unknown legacy metadata but rejects invalid or missing fields in the realtime envelope', () => {
+  const event = { seq: 1, version: null, epoch: null, tick: 0, kind: 'OUTBOUND_CREATE', payload: {}, createdAt: '2026-11-13T01:00:00.000Z' };
+  const batch = { spaceId: fixtureId(1), warehouseId: fixtureId(2), events: [event] };
+  expect(realtimeBatchSchema.safeParse(batch).success).toBe(true);
+  expect(realtimeBatchSchema.safeParse({ ...batch, events: [{ ...event, epoch: -1 }] }).success).toBe(false);
+  expect(realtimeBatchSchema.safeParse({ ...batch, events: [{ ...event, version: undefined }] }).success).toBe(false);
 });
