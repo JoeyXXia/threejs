@@ -12,7 +12,8 @@ if (!databaseUrl || new URL(databaseUrl).hostname !== '127.0.0.1' || new URL(dat
   throw new Error('Isolated write test DB required');
 }
 const db = new PrismaClient({ datasourceUrl: databaseUrl });
-const url = 'http://127.0.0.1:13007';
+const apiPort = require('../api-test-port.cjs')(7);
+const url = `http://127.0.0.1:${apiPort}`;
 const foreign = `/spaces/${ids.spaceB}/warehouses/${ids.warehouseB}/wms`;
 let server, admin, operator, viewer, other, scope, base, actorId;
 
@@ -26,7 +27,7 @@ async function login(name) {
 
 beforeAll(async () => {
   server = spawn(process.execPath, ['apps/api/dist/main.js'], { windowsHide: true, stdio: 'ignore',
-    env: { ...process.env, DATABASE_URL: databaseUrl, API_HOST: '127.0.0.1', API_PORT: '13007' } });
+    env: { ...process.env, DATABASE_URL: databaseUrl, API_HOST: '127.0.0.1', API_PORT: apiPort } });
   let ready = false;
   for (let attempt = 0; attempt < 80 && !ready; attempt++) {
     try { ready = (await fetch(`${url}/health`, { signal: AbortSignal.timeout(500) })).ok; } catch { /* starting */ }

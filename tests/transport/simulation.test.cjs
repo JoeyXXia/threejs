@@ -288,8 +288,11 @@ test('graceful release resumes from the committed tick, events paginate, and cur
   await runUntil('COMPLETED');
 });
 
+const restartApiPort = require('../api-test-port.cjs')(19);
+const restartApiOrigin = `http://127.0.0.1:${restartApiPort}`;
+
 test('a killed API process restarts from the persisted tick and completes with a new fencing epoch', async () => {
-  const origin = 'http://127.0.0.1:13019';
+  const origin = restartApiOrigin;
   const base = `${origin}/spaces/${scope.spaceId}/warehouses/${scope.warehouseId}`;
   let child;
   async function until(read, predicate, timeoutMs = 20000) {
@@ -303,7 +306,7 @@ test('a killed API process restarts from the persisted tick and completes with a
   }
   async function startApi() {
     child = spawn(process.execPath, ['apps/api/dist/main.js'], { cwd: resolve(__dirname, '../..'), windowsHide: true,
-      env: { ...process.env, DATABASE_URL: url, API_HOST: '127.0.0.1', API_PORT: '13019', NODE_ENV: 'test', SESSION_SECURE: 'false' }, stdio: 'ignore' });
+      env: { ...process.env, DATABASE_URL: url, API_HOST: '127.0.0.1', API_PORT: restartApiPort, NODE_ENV: 'test', SESSION_SECURE: 'false' }, stdio: 'ignore' });
     await until(() => fetch(`${origin}/health`).then((r) => r.ok).catch(() => false), Boolean);
     const login = await fetch(`${origin}/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'WarehouseTwin' },
       body: JSON.stringify({ email: 'admin@demo.local', password: process.env.DEMO_PASSWORD }) });
@@ -350,7 +353,7 @@ test('putaway survives an API kill after pickup, then resumes once without a sec
   await inbound.phase(scope, receipt.id, 'receive', cmd());
   await inbound.phase(scope, receipt.id, 'inspect', { ...cmd(), decision: 'PASS' });
   const putawayInput = { kind: 'PUTAWAY', inboundOrderId: receipt.id, targetLocationId: storage.id, reason: note };
-  const origin = 'http://127.0.0.1:13019';
+  const origin = restartApiOrigin;
   const base = `${origin}/spaces/${scope.spaceId}/warehouses/${scope.warehouseId}`;
   let child;
   async function until(read, predicate, timeoutMs = 20000) {
@@ -364,7 +367,7 @@ test('putaway survives an API kill after pickup, then resumes once without a sec
   }
   async function startApi() {
     child = spawn(process.execPath, ['apps/api/dist/main.js'], { cwd: resolve(__dirname, '../..'), windowsHide: true,
-      env: { ...process.env, DATABASE_URL: url, API_HOST: '127.0.0.1', API_PORT: '13019', NODE_ENV: 'test', SESSION_SECURE: 'false' }, stdio: 'ignore' });
+      env: { ...process.env, DATABASE_URL: url, API_HOST: '127.0.0.1', API_PORT: restartApiPort, NODE_ENV: 'test', SESSION_SECURE: 'false' }, stdio: 'ignore' });
     await until(() => fetch(`${origin}/health`).then((r) => r.ok).catch(() => false), Boolean);
     const login = await fetch(`${origin}/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'WarehouseTwin' },
       body: JSON.stringify({ email: 'admin@demo.local', password: process.env.DEMO_PASSWORD }) });

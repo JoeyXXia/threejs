@@ -17,13 +17,14 @@ const db = new PrismaClient({ datasourceUrl: testUrl });
 const scope = { spaceId: ids.spaceA, warehouseId: ids.warehouseA };
 const base = `/spaces/${ids.spaceA}/warehouses/${ids.warehouseA}`;
 const other = `/spaces/${ids.spaceB}/warehouses/${ids.warehouseB}`;
-const http = 'http://127.0.0.1:13002';
+const apiPort = require('../api-test-port.cjs')(2);
+const http = `http://127.0.0.1:${apiPort}`;
 let server, adminCookie, viewerCookie, otherCookie, layout;
 
 async function start() {
   server = spawn(process.execPath, ['apps/api/dist/main.js'], {
     cwd: resolve(__dirname, '../..'), windowsHide: true,
-    env: { ...process.env, API_PORT: '13002', API_HOST: '127.0.0.1' }, stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, API_PORT: apiPort, API_HOST: '127.0.0.1' }, stdio: ['ignore', 'pipe', 'pipe'],
   });
   let logs = '';
   server.stdout.on('data', (data) => { logs += data.toString(); });

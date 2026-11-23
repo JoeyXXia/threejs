@@ -10,11 +10,12 @@ const { resolve } = require('node:path');
 const request = require('supertest');
 const testUrl = process.env.INBOUND_TEST_DATABASE_URL;
 if (!testUrl || new URL(testUrl).hostname !== '127.0.0.1' || new URL(testUrl).pathname !== '/warehouse_twin_inbound_test') throw new Error('Isolated write test DB required');
-const db = new PrismaClient({ datasourceUrl: testUrl }), url = 'http://127.0.0.1:13005';
+const apiPort = require('../api-test-port.cjs')(5);
+const db = new PrismaClient({ datasourceUrl: testUrl }), url = `http://127.0.0.1:${apiPort}`;
 let server, admin, operator, viewer, actor, operatorActor, scope, base, sku, batch;
 async function start() {
   server = spawn(process.execPath, ['apps/api/dist/main.js'], { cwd: resolve(__dirname, '../..'), windowsHide: true,
-    env: { ...process.env, DATABASE_URL: testUrl, API_HOST: '127.0.0.1', API_PORT: '13005' }, stdio: ['ignore', 'pipe', 'pipe'] });
+    env: { ...process.env, DATABASE_URL: testUrl, API_HOST: '127.0.0.1', API_PORT: apiPort }, stdio: ['ignore', 'pipe', 'pipe'] });
   for (let i = 0; i < 80; i++) { try { if ((await fetch(`${url}/health`, { signal: AbortSignal.timeout(500) })).ok) return; } catch { /* starting */ }
     if (server.exitCode !== null) throw new Error('API exited'); await delay(100); }
   throw new Error('API did not start');

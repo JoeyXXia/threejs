@@ -13,11 +13,12 @@ if (!testUrl || new URL(testUrl).pathname !== '/warehouse_twin_inbound_test' || 
 const db = new PrismaClient({ datasourceUrl: testUrl });
 const scope = { spaceId: ids.spaceA, warehouseId: randomUUID() };
 const base = `/spaces/${scope.spaceId}/warehouses/${scope.warehouseId}`;
-const url = 'http://127.0.0.1:13003';
+const apiPort = require('../api-test-port.cjs')(3);
+const url = `http://127.0.0.1:${apiPort}`;
 let server, admin, operator, viewer, choices, actor, operatorActor;
 async function start() {
   server = spawn(process.execPath, ['apps/api/dist/main.js'], { cwd: resolve(__dirname, '../..'), windowsHide: true,
-    env: { ...process.env, DATABASE_URL: testUrl, API_PORT: '13003', API_HOST: '127.0.0.1' }, stdio: ['ignore', 'pipe', 'pipe'] });
+    env: { ...process.env, DATABASE_URL: testUrl, API_PORT: apiPort, API_HOST: '127.0.0.1' }, stdio: ['ignore', 'pipe', 'pipe'] });
   for (let i = 0; i < 80; i++) {
     try { if ((await fetch(`${url}/health`, { signal: AbortSignal.timeout(500) })).ok) return; } catch { /* starting */ }
     if (server.exitCode !== null) throw new Error('API exited'); await delay(100);

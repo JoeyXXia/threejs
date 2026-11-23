@@ -16,7 +16,8 @@ const db = new PrismaClient({ datasourceUrl: testUrl });
 const pathA = `/spaces/${ids.spaceA}/warehouses/${ids.warehouseA}`;
 const pathB = `/spaces/${ids.spaceB}/warehouses/${ids.warehouseB}`;
 let server;
-const http = 'http://127.0.0.1:13001';
+const apiPort = require('../api-test-port.cjs')(1);
+const http = `http://127.0.0.1:${apiPort}`;
 const csrf = (req) => req.set('X-Requested-With', 'WarehouseTwin');
 const login = (role = 'admin', password = process.env.DEMO_PASSWORD) => csrf(request(http).post('/auth/login')).send({ email: `${role}@demo.local`, password });
 const cookie = (response) => response.headers['set-cookie'][0].split(';')[0];
@@ -26,7 +27,7 @@ beforeEach(async () => {
   await db.session.deleteMany();
   server = spawn(process.execPath, ['apps/api/dist/main.js'], {
     cwd: resolve(__dirname, '../..'), windowsHide: true,
-    env: { ...process.env, API_PORT: '13001', API_HOST: '127.0.0.1' },
+    env: { ...process.env, API_PORT: apiPort, API_HOST: '127.0.0.1' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let output = '';

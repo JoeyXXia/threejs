@@ -13,10 +13,14 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { createInterface } from 'node:readline';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
+// Allow an alternate loopback API port when Windows reserves the default.
+const apiPort = process.env.QA_API_PORT ?? '13004';
+if (!/^\d{1,5}$/.test(apiPort) || Number(apiPort) < 1024 || Number(apiPort) > 65535) throw new Error('Invalid QA_API_PORT');
+const apiOrigin = `http://127.0.0.1:${apiPort}`;
 const url = `postgresql://warehouse:${randomBytes(24).toString('hex')}@127.0.0.1:15434/warehouse_twin_browser`;
 const env = { ...process.env, DATABASE_URL: url, DEMO_PASSWORD: 'browser-fixture-only-2026',
-  NODE_ENV: 'test', API_PORT: '13004', API_HOST: '127.0.0.1', SESSION_TTL_SECONDS: '3600', SESSION_SECURE: 'false',
-  WEB_ORIGINS: 'http://127.0.0.1:15174', API_PROXY_TARGET: 'http://127.0.0.1:13004' };
+  NODE_ENV: 'test', API_PORT: apiPort, API_HOST: '127.0.0.1', SESSION_TTL_SECONDS: '3600', SESSION_SECURE: 'false',
+  WEB_ORIGINS: 'http://127.0.0.1:15174', API_PROXY_TARGET: apiOrigin };
 const db = new database.PrismaClient({ datasourceUrl: url });
 const pg = await createPostgres({ databaseDir: mkdtempSync(join(tmpdir(), 'warehouse-twin-browser-')), user: 'warehouse',
   password: new URL(url).password, port: 15434, persistent: true, onLog: () => {}, onError: () => {},
@@ -78,7 +82,7 @@ try {
   }, { timeout: 15000 });
   child(['apps/api/dist/main.js']);
   child(['apps/web/node_modules/vite/bin/vite.js', 'apps/web', '--host', '127.0.0.1', '--port', '15174', '--strictPort']);
-  await ready('http://127.0.0.1:13004/health'); await ready('http://127.0.0.1:15174');
+  await ready(`${apiOrigin}/health`); await ready('http://127.0.0.1:15174');
   console.log('QA READY http://127.0.0.1:15174 — test account admin@demo.local. Commands: layout-v2, reserve, expire, stop');
   const input = createInterface({ input: process.stdin });
   for await (const line of input) {
