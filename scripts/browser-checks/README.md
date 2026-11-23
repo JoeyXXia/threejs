@@ -250,3 +250,19 @@ npx --offline --yes --package @playwright/cli@0.1.24 playwright-cli -s=warehouse
 ## Day26 电量与充电
 
 在全新隔离 pnpm qa:browser 环境下，创建 output/playwright/day-26，然后按 Day25 的固定 CLI 版本打开新会话 warehouse-day26；运行 day26-energy.js。演示资源将充电配置到出库停靠格；先完成真实运输、再用 UI 充电，核对电量、占位、原归属、唯一取放历史、对账和 viewer 403。不改数据库制造低电量；低电量和争抢反例由隔离集成测试负责。结束后关闭 Chrome、QA 输入 stop。
+## Day 28 车队阶段录像
+
+在全新隔离 QA 数据库运行一次。若 Windows 把默认 API 端口 13004 纳入保留范围，可先设 `$env:QA_API_PORT='13036'`（确认端口空闲），然后 `pnpm qa:browser`，等待 `QA READY`。浏览器入口仍为 `http://127.0.0.1:15174`。用 QA 管理员登录，停在含「演示仓库 A ADMIN」的页面，不录登录。需要一个启用 WebGL 的 Chrome 会话。
+
+```powershell
+New-Item -ItemType Directory -Force output/playwright/day-28 | Out-Null
+function pw28 { npx --offline --yes --package @playwright/cli@0.1.24 playwright-cli -s=warehouse-day28 @args }
+pw28 open http://127.0.0.1:15174 --browser chrome
+# 用 Playwright CLI 的 snapshot/fill/click 或 run-code 登录；不要关闭浏览器会话。
+pw28 video-start output/playwright/day-28/day-28-demo.webm --size=1440x1100 --fps=25
+pw28 run-code --filename scripts/browser-checks/day28-fleet-demo.js
+pw28 video-stop
+pw28 close
+```
+
+录前将浏览器视口设为 1440×1100（可在登录脚本里 `await page.setViewportSize({ width: 1440, height: 1100 })`）。脚本走真实授权 API 布置与操作两单和五车，通过原应用场景录制；字幕由脚本读取已提交快照，不是新增产品 UI。用本地浏览器打开生成的 WebM，确认六段均可播放、字幕完整，再归档；失败片段和原始日志留本地。验收结束在 QA 启动终端输入 `stop`。
