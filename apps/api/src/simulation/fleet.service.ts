@@ -71,26 +71,28 @@ export class FleetService implements OnModuleInit, OnModuleDestroy {
     return tx.$queryRaw`SELECT "userId" FROM "WarehouseAccess" WHERE "userId"=${scope.actorId}::uuid AND "spaceId"=${scope.spaceId}::uuid AND "warehouseId"=${scope.warehouseId}::uuid FOR SHARE`;
   }
   async read(scope: Scope): Promise<FleetResponse> {
-    return this.db.$transaction(async (tx) => {
-      const a = await this.auth(tx, scope), row = await tx.warehouseRuntime.findUnique({ where: { warehouseId: scope.warehouseId } });
-      const e = row ? this.decode(row) : null;
-      const claims = await tx.fleetClaim.findMany({ where: { spaceId: scope.spaceId, warehouseId: scope.warehouseId } });
-      return { spaceId: scope.spaceId, warehouseId: scope.warehouseId, role: a.role, enabled: !!e, tick: row?.tick ?? 0,
-        watermark: row?.seq ?? 0, epoch: row?.epoch ?? 0, stateVersion: row?.version ?? 0,
-        layoutId: e?.state.robots[0]?.simulation.map.layoutId ?? null, layoutVersion: e?.state.robots[0]?.simulation.map.version ?? null,
-        resources: (e?.state.resources ?? []).map((r) => ({ ...r, cells: [...r.cells] })),
-        navigation: e ? { ...navigationOf(e.state), closed: [...navigationOf(e.state).closed] } : { revision: 0, closed: [] },
-        alerts: e ? fleetAlerts(e.state) : [],
-        robots: e?.state.robots.map((r, i) => { const claim = claims.find((c) => c.id === r.work?.taskId);
-          if (r.work && (!claim || claim.robotId !== r.id || claim.active === (r.work.phase === 'COMPLETED')
-            || (['APPROACH', 'LOADING', 'COMPLETED'].includes(r.work.phase) && claim.loaded)
-            || (['TRANSPORT', 'UNLOADING'].includes(r.work.phase) && !claim.loaded))) throw new ConflictException('持久任务归属或载荷与检查点不一致');
-          return { id: r.id, taskId: r.work?.taskId ?? null, ledgerTaskId: claim?.taskId ?? null, phase: r.work?.phase ?? 'IDLE',
-            from: e.from[i]!, to: r.simulation.robot.position, battery: r.simulation.robot.battery, carrying: claim?.loaded ?? false,
-            route: [...r.simulation.robot.path.slice(Math.max(0, r.simulation.robot.next - 1))], waitTicks: r.waitTicks, totalWaitTicks: r.totalWaitTicks,
-            waitReason: r.waitReason, blockerId: r.blockerId, resourceWaitId: r.resourceWaitId ?? null, navigationIssue: r.navigationIssue ?? null,
-            charge: r.charge ?? null, deviceFault: r.deviceFault ?? null, recoveryStatus: r.deviceFault ? (claim?.loaded ? 'NEEDS_RECOVERY' : 'PAUSED') : null, error: r.work?.error ?? null }; }) ?? [] };
-    }, { isolationLevel: 'RepeatableRead' });
+    return this.db.$transaction((tx) => this.readInTransaction(tx, scope), { isolationLevel: 'RepeatableRead' });
+  }
+
+  async readInTransaction(tx: Prisma.TransactionClient, scope: Scope): Promise<FleetResponse> {
+    const a = await this.auth(tx, scope), row = await tx.warehouseRuntime.findUnique({ where: { warehouseId: scope.warehouseId } });
+    const e = row ? this.decode(row) : null;
+    const claims = await tx.fleetClaim.findMany({ where: { spaceId: scope.spaceId, warehouseId: scope.warehouseId } });
+    return { spaceId: scope.spaceId, warehouseId: scope.warehouseId, role: a.role, enabled: !!e, tick: row?.tick ?? 0,
+      watermark: row?.seq ?? 0, epoch: row?.epoch ?? 0, stateVersion: row?.version ?? 0,
+      layoutId: e?.state.robots[0]?.simulation.map.layoutId ?? null, layoutVersion: e?.state.robots[0]?.simulation.map.version ?? null,
+      resources: (e?.state.resources ?? []).map((r) => ({ ...r, cells: [...r.cells] })),
+      navigation: e ? { ...navigationOf(e.state), closed: [...navigationOf(e.state).closed] } : { revision: 0, closed: [] },
+      alerts: e ? fleetAlerts(e.state) : [],
+      robots: e?.state.robots.map((r, i) => { const claim = claims.find((c) => c.id === r.work?.taskId);
+        if (r.work && (!claim || claim.robotId !== r.id || claim.active === (r.work.phase === 'COMPLETED')
+          || (['APPROACH', 'LOADING', 'COMPLETED'].includes(r.work.phase) && claim.loaded)
+          || (['TRANSPORT', 'UNLOADING'].includes(r.work.phase) && !claim.loaded))) throw new ConflictException('持久任务归属或载荷与检查点不一致');
+        return { id: r.id, taskId: r.work?.taskId ?? null, ledgerTaskId: claim?.taskId ?? null, phase: r.work?.phase ?? 'IDLE',
+          from: e.from[i]!, to: r.simulation.robot.position, battery: r.simulation.robot.battery, carrying: claim?.loaded ?? false,
+          route: [...r.simulation.robot.path.slice(Math.max(0, r.simulation.robot.next - 1))], waitTicks: r.waitTicks, totalWaitTicks: r.totalWaitTicks,
+          waitReason: r.waitReason, blockerId: r.blockerId, resourceWaitId: r.resourceWaitId ?? null, navigationIssue: r.navigationIssue ?? null,
+          charge: r.charge ?? null, deviceFault: r.deviceFault ?? null, recoveryStatus: r.deviceFault ? (claim?.loaded ? 'NEEDS_RECOVERY' : 'PAUSED') : null, error: r.work?.error ?? null }; }) ?? [] };
   }
   async charge(scope: Scope, value: unknown) {
     const body = objectInput(value, ['robotId', 'action', 'reason']);

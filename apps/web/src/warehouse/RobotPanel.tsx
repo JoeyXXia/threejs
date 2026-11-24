@@ -4,8 +4,8 @@ import type { SimulationResponse } from '@warehouse-twin/contracts';
 import { api, ApiError } from '../api';
 import { simulationKey, simulationPath } from './robot-data';
 
-export function RobotPanel({ data, error, updatedAt, userId, spaceId, warehouseId, onUnauthorized }: {
-  data: SimulationResponse | undefined; error: Error | null; updatedAt: number;
+export function RobotPanel({ data, error, paused = false, updatedAt, userId, spaceId, warehouseId, onUnauthorized }: {
+  data: SimulationResponse | undefined; error: Error | null; paused?: boolean; updatedAt: number;
   userId: string; spaceId: string; warehouseId: string; onUnauthorized: () => void;
 }) {
   const client = useQueryClient();
@@ -24,7 +24,7 @@ export function RobotPanel({ data, error, updatedAt, userId, spaceId, warehouseI
   const advancedAt = useRef(Date.now());
   useEffect(() => { advancedAt.current = Date.now(); }, [runtime?.taskId, runtime?.tick, runtime?.phase]);
   const active = runtime && !['COMPLETED', 'ERROR'].includes(runtime.phase);
-  const stale = Boolean(error || (runtime && now - updatedAt > 1500) || (active && now - advancedAt.current > 1500));
+  const stale = Boolean(error || (active && (now - updatedAt > 1500 || now - advancedAt.current > 1500)));
   const busy = runtime && runtime.phase !== 'COMPLETED';
   return <section aria-label="软件机器人" className="robot-panel">
     <h2>单车软件模拟</h2>
@@ -36,7 +36,7 @@ export function RobotPanel({ data, error, updatedAt, userId, spaceId, warehouseI
     {runtime?.error && <p role="alert">{runtime.error}</p>}
     {start.error && <p role="alert">{start.error.message}</p>}
     <form onSubmit={(event) => { event.preventDefault(); start.mutate(); }}>
-      <fieldset disabled={!data || data.role === 'VIEWER' || Boolean(busy) || start.isPending || stale}>
+      <fieldset disabled={paused || !data || data.role === 'VIEWER' || Boolean(busy) || start.isPending || stale}>
         <label>任务类型<select value={kind} onChange={(event) => setKind(event.target.value as 'OUTBOUND' | 'PUTAWAY')}><option value="OUTBOUND">出库搬运</option><option value="PUTAWAY">质检放行上架</option></select></label>
         {kind === 'PUTAWAY' ? <>
           <label>已放行入库单<select value={inboundOrderId} onChange={(event) => setReceipt(event.target.value)} required><option value="">选择整单</option>{data?.putawayReceipts.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}</select></label>

@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
+import { BadRequestException, ConflictException, GoneException, ForbiddenException, Inject, Injectable, NotFoundException, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { Prisma, type WarehouseRuntime } from '@warehouse-twin/database';
 import { robotCheckpointSchema, type RobotSnapshot, type SimulationResponse } from '@warehouse-twin/contracts';
@@ -80,22 +80,24 @@ export class SimulationService implements OnModuleInit, OnModuleDestroy {
       route: [...state.robot.path], carrying: run.loaded, error: run.error ?? run.task.error };
   }
   async read(scope: Scope): Promise<SimulationResponse> {
-    return this.db.$transaction(async (tx) => {
-      const access = await this.access(scope, false, tx);
-      const where = { spaceId: scope.spaceId, warehouseId: scope.warehouseId };
-      const row = await tx.warehouseRuntime.findUnique({ where: { warehouseId: scope.warehouseId } });
-      const run = row ? this.decode(row) : null;
-      const allocations = await tx.allocation.findMany({ where: { ...where, order: { status: 'ALLOCATED' },
-        OR: [{ task: null }, { task: { phase: 'READY' } }] },
-        include: { task: true, balance: { include: { location: true } }, order: { include: { batch: true } } }, orderBy: { id: 'asc' }, take: 100 });
-      const claimed = new Set((await tx.fleetClaim.findMany({ where: { ...where, active: true }, select: { taskId: true } })).map((c) => c.taskId));
-      const receipts = await tx.inboundOrder.findMany({ where: { ...where, status: 'PASSED', putawayTask: null }, include: { batch: true }, orderBy: { id: 'asc' }, take: 100 });
-      return { ...where, putawayReceipts: receipts.map((r) => ({ id: r.id, quantity: r.quantity, label: `${r.batch.code} · ${r.quantity} 件 · ${r.id.slice(0, 8)}` })),
-        storage: access.warehouse.activeLayout!.placements.filter((p) => p.location.kind === 'STORAGE').map((p) => ({ id: p.locationId, code: p.location.code })), role: access.role, runtime: run ? this.snapshot(run) : null,
-        watermark: row?.seq ?? 0, epoch: row?.epoch ?? 0, stateVersion: row?.version ?? 0,
-        allocations: allocations.filter((a) => !a.task || !claimed.has(a.task.id)).map((a) => ({ id: a.id, quantity: a.quantity, label: `${a.order.batch.code} · ${a.balance.location.code} · ${a.quantity} 件` })),
-        staging: access.warehouse.activeLayout!.placements.filter((p) => p.location.kind === 'OUTBOUND').map((p) => ({ id: p.locationId, code: p.location.code })) };
-    }, { isolationLevel: 'RepeatableRead' });
+    return this.db.$transaction((tx) => this.readInTransaction(tx, scope), { isolationLevel: 'RepeatableRead' });
+  }
+
+  async readInTransaction(tx: Prisma.TransactionClient, scope: Scope): Promise<SimulationResponse> {
+    const access = await this.access(scope, false, tx);
+    const where = { spaceId: scope.spaceId, warehouseId: scope.warehouseId };
+    const row = await tx.warehouseRuntime.findUnique({ where: { warehouseId: scope.warehouseId } });
+    const run = row ? this.decode(row) : null;
+    const allocations = await tx.allocation.findMany({ where: { ...where, order: { status: 'ALLOCATED' },
+      OR: [{ task: null }, { task: { phase: 'READY' } }] },
+      include: { task: true, balance: { include: { location: true } }, order: { include: { batch: true } } }, orderBy: { id: 'asc' }, take: 100 });
+    const claimed = new Set((await tx.fleetClaim.findMany({ where: { ...where, active: true }, select: { taskId: true } })).map((c) => c.taskId));
+    const receipts = await tx.inboundOrder.findMany({ where: { ...where, status: 'PASSED', putawayTask: null }, include: { batch: true }, orderBy: { id: 'asc' }, take: 100 });
+    return { ...where, putawayReceipts: receipts.map((r) => ({ id: r.id, quantity: r.quantity, label: `${r.batch.code} · ${r.quantity} 件 · ${r.id.slice(0, 8)}` })),
+      storage: access.warehouse.activeLayout!.placements.filter((p) => p.location.kind === 'STORAGE').map((p) => ({ id: p.locationId, code: p.location.code })), role: access.role, runtime: run ? this.snapshot(run) : null,
+      watermark: row?.seq ?? 0, epoch: row?.epoch ?? 0, stateVersion: row?.version ?? 0,
+      allocations: allocations.filter((a) => !a.task || !claimed.has(a.task.id)).map((a) => ({ id: a.id, quantity: a.quantity, label: `${a.order.batch.code} · ${a.balance.location.code} · ${a.quantity} 件` })),
+      staging: access.warehouse.activeLayout!.placements.filter((p) => p.location.kind === 'OUTBOUND').map((p) => ({ id: p.locationId, code: p.location.code })) };
   }
   async events(scope: Scope, after: number) {
     if (!Number.isSafeInteger(after) || after < 0 || after > 2147483647) throw new BadRequestException('事件游标无效');
@@ -106,6 +108,9 @@ export class SimulationService implements OnModuleInit, OnModuleDestroy {
       if (after > watermark) throw new ConflictException('事件游标超出当前仓库水位');
       const events = await tx.warehouseEvent.findMany({ where: { spaceId: scope.spaceId, warehouseId: scope.warehouseId,
         seq: { gt: after, lte: watermark } }, orderBy: { seq: 'asc' }, take: 100 });
+      if (after < watermark && (events.length === 0 || events.some((event, i) => event.seq !== after + 1 + i))) {
+        throw new GoneException('事件游标已失效，请全量同步');
+      }
       return { spaceId: scope.spaceId, warehouseId: scope.warehouseId, after, watermark,
         events: events.map((e) => ({ seq: e.seq, version: e.version, epoch: e.epoch, tick: e.tick, kind: e.kind, payload: e.payload, createdAt: e.createdAt.toISOString() })),
         hasMore: (events.at(-1)?.seq ?? after) < watermark };

@@ -5,8 +5,8 @@ import { api, ApiError } from '../api';
 import { fleetKey, fleetPath } from './fleet-data';
 import { simulationKey } from './robot-data';
 
-export function FleetPanel({ data, options, error, userId, spaceId, warehouseId, onUnauthorized }: {
-  data: FleetResponse | undefined; options: SimulationResponse | undefined; error: Error | null;
+export function FleetPanel({ data, options, error, paused = false, userId, spaceId, warehouseId, onUnauthorized }: {
+  data: FleetResponse | undefined; options: SimulationResponse | undefined; error: Error | null; paused?: boolean;
   userId: string; spaceId: string; warehouseId: string; onUnauthorized: () => void;
 }) {
   const client = useQueryClient(), [kind, setKind] = useState('OUTBOUND'), [now, setNow] = useState(Date.now);
@@ -18,7 +18,7 @@ export function FleetPanel({ data, options, error, userId, spaceId, warehouseId,
   useEffect(() => { if (command.error instanceof ApiError && command.error.status === 401) onUnauthorized(); }, [command.error, onUnauthorized]);
   const active = data?.robots.some((r) => r.charge || !['IDLE', 'COMPLETED', 'ERROR'].includes(r.phase));
   const stale = !!error || (active && now - advanced.current > 1500);
-  const disabled = !data || data.role === 'VIEWER' || command.isPending;
+  const disabled = paused || !data || data.role === 'VIEWER' || command.isPending;
   const [configurationError, setConfigurationError] = useState<string | null>(null);
   return <section className="robot-panel" aria-label="多车协调">
     <h2>多车分配与集中下一步协调</h2>

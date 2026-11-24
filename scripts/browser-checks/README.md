@@ -270,3 +270,7 @@ pw28 close
 ## Day 29 双浏览器实时订阅
 
 按上节启动全新隔离 QA，并登录测试管理员。使用 Playwright CLI 执行 `run-code --filename scripts/browser-checks/day29-realtime.js`；脚本复制隔离测试会话到第二个 Chrome 上下文，检查独立 WebSocket 收到相同序列并自动刷新预占，随后退出并断言两个连接清理。权限、回滚与补发的独立会话用例见 [Day29 验收](../../reports/day-29-acceptance.md)。
+
+## Day 30 快照竞态与网络恢复
+
+全新隔离 QA 登录管理员后，运行 `run-code --filename scripts/browser-checks/day30-recovery.js`。在第二个 Chrome 上下文暂缓真实首快照响应，等预占提交事件确实到达后再放行；用网络离线模拟验证新预占与车队任务在重连后出现；最后阻断快照请求，验证陈旧提示、操作禁用和重试。该脚本通过现有业务 API 生成提交，不用假库存响应。

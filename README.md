@@ -2,6 +2,8 @@
 
 WMS 业务驱动的智能仓库数字孪生演示系统。样本为合成数据，库存与流水由 PostgreSQL 持久化，设备为软件模拟。
 
+Day30 将仓库场景的布局、库存与运行状态合成一次一致读。断线恢复从最后确认水位续订；过期游标重新取完整基线，离线或恢复失败会标明并停用场景写操作。见 [Day30 验收](reports/day-30-acceptance.md)。
+
 Day29 增加仓库场景的 Socket.IO 授权订阅。只转发 PostgreSQL 已提交事件，按仓库检查会话与权限；画面以 HTTP 快照为准，业务事件触发库存刷新。已有本地库运行 `pnpm db:generate` 和 `pnpm db:migrate`，无需重置。协议和验收见 [Day29 报告](reports/day-29-acceptance.md)。
 
 Day28 归档第 4 周版本 `v0.4-fleet-simulation`。新版[五车录像](reports/day-28-demo.webm)串联封路绕行、通道等待、带货故障/恢复、充电和库内取放对账。见[阶段说明](docs/releases/v0.4-fleet-simulation.md)和[实测报告](reports/day-28-acceptance.md)。没有接入真实设备，也不保证拥堵最终解除。

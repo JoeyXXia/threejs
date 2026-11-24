@@ -13,7 +13,7 @@ const realtimeScope = { spaceId: id, warehouseId: id };
 export const realtimeSubscribeSchema = z.strictObject({ ...realtimeScope, after: eventCursor.optional() });
 export const realtimeAckSchema = z.union([
   z.object({ ok: z.literal(true), after: eventCursor }),
-  z.object({ ok: z.literal(false), code: z.enum(['BAD_REQUEST', 'UNAUTHORIZED', 'NOT_FOUND', 'CURSOR_AHEAD', 'BUSY', 'UNAVAILABLE']) }),
+  z.object({ ok: z.literal(false), code: z.enum(['BAD_REQUEST', 'UNAUTHORIZED', 'NOT_FOUND', 'CURSOR_AHEAD', 'CURSOR_EXPIRED', 'BUSY', 'UNAVAILABLE']) }),
 ]);
 const warehouseEvent = z.object({
   seq: eventCursor.positive(), version: eventCursor.nullable(), epoch: eventCursor.nullable(), tick: eventCursor,
@@ -316,3 +316,18 @@ export const warehouseEventsSchema = z.object({
     ctx.addIssue({ code: 'custom', message: 'Event cursor/order/watermark mismatch' });
   }
 });
+
+export const realtimeSnapshotSchema = z.object({
+  layout: layoutSchema, inventory: inventorySchema, simulation: simulationResponseSchema,
+  fleet: fleetResponseSchema, watermark: eventCursor,
+}).superRefine(({ layout, inventory, simulation, fleet, watermark }, ctx) => {
+  if ([inventory, simulation, fleet].some((part) => part.warehouseId !== layout.warehouseId
+      || part.spaceId !== layout.spaceId || part.watermark !== watermark)
+    || fleet.epoch !== simulation.epoch || fleet.stateVersion !== simulation.stateVersion
+    || (fleet.enabled && (fleet.layoutId !== layout.layoutVersion.id || fleet.layoutVersion !== layout.layoutVersion.version))
+    || (simulation.runtime && (simulation.runtime.layoutId !== layout.layoutVersion.id
+      || simulation.runtime.layoutVersion !== layout.layoutVersion.version))) {
+    ctx.addIssue({ code: 'custom', message: 'Snapshot parts disagree on scope, watermark, layout or runtime' });
+  }
+});
+export type RealtimeSnapshot = z.infer<typeof realtimeSnapshotSchema>;

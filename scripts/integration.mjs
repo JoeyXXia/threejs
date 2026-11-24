@@ -57,8 +57,9 @@ try {
   const realtimeEnv = { ...env, DATABASE_URL: realtimeDatabaseUrl };
   await run(['node_modules/prisma/build/index.js', 'migrate', 'deploy'], `${root}/packages/database`, realtimeEnv);
   await run(['seed.cjs'], `${root}/packages/database`, realtimeEnv);
-  // Use Node's normal module loader for direct imports of the Nest domain services.
-  await run(['--test', '--test-reporter=spec', '--test-reporter-destination=stdout',
+  // Legacy direct-tick and API-restart files share a cluster fixture database.
+  // Do not let an HTTP runner acquire a lease while a different file is stepping it.
+  await run(['--test', '--test-concurrency=1', '--test-reporter=spec', '--test-reporter-destination=stdout',
     '--test-reporter=tap', '--test-reporter-destination=reports/integration-transport.tap', 'tests/transport/transport.test.cjs', 'tests/transport/simulation.test.cjs', 'tests/transport/putaway.test.cjs', 'tests/transport/fleet.test.cjs', 'tests/transport/realtime.test.cjs']);
   await run(['node_modules/jest/bin/jest.js', '--config', 'tests/integration/jest.config.cjs', '--runInBand', '--json', '--outputFile', 'reports/integration-jest.json']);
   // Verify persisted rows after a real database restart, once all HTTP test processes have closed.

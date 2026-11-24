@@ -150,3 +150,75 @@ test('Day29 two authorized clients see committed events only, and a cursor repla
   assert.equal(b.client.connected, true);
   b.client.disconnect();
 });
+
+test('Day30 snapshot preserves one MVCC boundary across a real concurrent allocation', { timeout: 18000 }, async () => {
+  const { InventoryController } = require('../../apps/api/dist/inventory.controller');
+  const { AuthService } = require('../../apps/api/dist/auth/auth.service');
+  const { FleetService } = require('../../apps/api/dist/simulation/fleet.service');
+  const { SimulationService } = require('../../apps/api/dist/simulation/simulation.service');
+  const { TransportService } = require('../../apps/api/dist/transport/transport.service');
+  const { realtimeSnapshotSchema } = require('../../packages/contracts');
+  const cookie = await login('admin@demo.local');
+  const transport = new TransportService(db);
+  const controller = new InventoryController(db, new FleetService(db, transport), new SimulationService(db, transport), new AuthService(db));
+  const readInventory = controller.readInventory.bind(controller);
+  const entered = Promise.withResolvers(), release = Promise.withResolvers();
+  controller.readInventory = async (tx, ...args) => {
+    entered.resolve((await tx.warehouseRuntime.findUniqueOrThrow({ where: { warehouseId: scope.warehouseId } })).seq);
+    await release.promise;
+    return readInventory(tx, ...args);
+  };
+  const before = (await (await request(endpoint + '/inventory', cookie)).json()).summary.reserved;
+  const { recommendations: [batch] } = await (await request(endpoint + '/outbound-orders', cookie)).json();
+  const command = () => ({ key: randomUUID(), reason: 'Day30 snapshot race' });
+  const made = await request(endpoint + '/outbound-orders', cookie, { ...command(), skuId: batch.skuId, batchId: batch.batchId, quantity: 1 });
+  assert.equal(made.status, 201);
+  const order = await made.json();
+  const reading = controller.consistent({ headers: { cookie } }, scope.spaceId, scope.warehouseId);
+  let oldWatermark;
+  try {
+    oldWatermark = await Promise.race([entered.promise, reading.then(() => { throw new Error('Snapshot skipped barrier'); })]);
+    const allocated = await request(endpoint + '/outbound-orders/' + order.id + '/allocate', cookie, command());
+    assert.equal(allocated.status, 201);
+  } finally { release.resolve(); }
+  const snapshot = realtimeSnapshotSchema.parse(await reading);
+  assert.equal(snapshot.watermark, oldWatermark);
+  assert.equal(snapshot.inventory.summary.reserved, before);
+  const response = await request(endpoint + '/snapshot', cookie);
+  assert.equal(response.status, 200);
+  const current = realtimeSnapshotSchema.parse(await response.json());
+  assert.equal(current.inventory.summary.reserved, before + 1);
+  assert.ok(current.watermark > oldWatermark);
+  assert.equal((await request(`/spaces/${ids.spaceB}/warehouses/${ids.warehouseB}/snapshot`, cookie)).status, 404);
+});
+
+test('Day30 missing history expires the old cursor and fresh authorized snapshot remains available', { timeout: 18000 }, async () => {
+  const cookie = await login('viewer@demo.local');
+  const fixture = { spaceId: scope.spaceId, warehouseId: randomUUID() };
+  const path = `/spaces/${fixture.spaceId}/warehouses/${fixture.warehouseId}`;
+  const row = { ...fixture, tick: 0, epoch: 0, kind: 'CURSOR_FIXTURE', payload: {} };
+  await db.$transaction(async (tx) => {
+    await tx.warehouse.create({ data: { id: fixture.warehouseId, spaceId: fixture.spaceId, name: 'Day30 missing history fixture' } });
+    await seedInventory(tx, fixture.spaceId, fixture.warehouseId);
+    await tx.warehouseAccess.create({ data: { ...fixture, userId: viewerId, role: 'VIEWER' } });
+    await lockWarehouseState(tx, fixture);
+    await tx.warehouseRuntime.update({ where: { warehouseId: fixture.warehouseId }, data: { seq: 2, version: 2 } });
+    await tx.warehouseEvent.create({ data: { ...row, seq: 2, version: 2 } });
+  });
+  const socket = peer(cookie); await socket.start();
+  try {
+    assert.deepEqual(await socket.sub({ ...fixture, after: 0 }), { ok: false, code: 'CURSOR_EXPIRED' });
+    assert.equal((await request(path + '/simulation/events?after=0', cookie)).status, 410);
+    assert.deepEqual(await socket.sub(fixture), { ok: true, after: 2 });
+    const snapshot = await request(path + '/snapshot', cookie);
+    assert.equal(snapshot.status, 200); assert.equal((await snapshot.json()).watermark, 2);
+    const close = once(socket.client, 'disconnect', { signal: AbortSignal.timeout(5000) });
+    await db.warehouseAccess.delete({ where: { userId_spaceId_warehouseId: { ...fixture, userId: viewerId } } });
+    await close;
+    assert.equal((await request(path + '/snapshot', cookie)).status, 404);
+  } finally {
+    socket.client.disconnect();
+    // Restore the synthetic history by append only, before the suite's restart reconciliation.
+    await db.warehouseEvent.create({ data: { ...row, seq: 1, version: 1 } });
+  }
+});

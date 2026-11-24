@@ -65,19 +65,24 @@ export class WarehouseGateway implements OnModuleDestroy {
     const scope = { spaceId: parsed.data.spaceId.toLowerCase(), warehouseId: parsed.data.warehouseId.toLowerCase() };
     state.busy = true;
     try {
-      const watermark = await this.db.$transaction(async (tx) => {
+      const result = await this.db.$transaction(async (tx) => {
         await this.authorize(tx, socket, scope);
         const runtime = await tx.warehouseRuntime.findUnique({ where: { spaceId_warehouseId: scope }, select: { seq: true } });
-        return runtime?.seq ?? 0;
+        const watermark = runtime?.seq ?? 0;
+        const after = parsed.data.after ?? watermark;
+        if (after > watermark) return { ok: false, code: 'CURSOR_AHEAD' } as const;
+        if (after < watermark && !await tx.warehouseEvent.findUnique({
+          where: { warehouseId_seq: { warehouseId: scope.warehouseId, seq: after + 1 } }, select: { seq: true },
+        })) return { ok: false, code: 'CURSOR_EXPIRED' } as const;
+        return { ok: true, after } as const;
       }, { isolationLevel: 'RepeatableRead' });
-      const after = parsed.data.after ?? watermark;
-      if (after > watermark) { reply({ ok: false, code: 'CURSOR_AHEAD' }); return; }
+      if (!result.ok) { reply(result); return; }
       if (!socket.connected) return;
       // The room name never comes from the client. A room is not a permission check.
       await socket.join(`warehouse:${scope.spaceId}:${scope.warehouseId}`);
       if (!socket.connected) return;
-      reply({ ok: true, after });
-      state.subscription = { scope, after };
+      reply(result);
+      state.subscription = { scope, after: result.after };
     } catch (error) {
       const status = error instanceof HttpException ? error.getStatus() : 500;
       reply({ ok: false, code: status === 401 ? 'UNAUTHORIZED' : status === 404 ? 'NOT_FOUND' : 'UNAVAILABLE' });
@@ -91,12 +96,16 @@ export class WarehouseGateway implements OnModuleDestroy {
       const events = await this.db.$transaction(async (tx) => {
         // Check session and grants in the same MVCC snapshot as the event page.
         await this.authorize(tx, socket, scope);
-        return tx.warehouseEvent.findMany({
+        const watermark = (await tx.warehouseRuntime.findUnique({ where: { spaceId_warehouseId: scope }, select: { seq: true } }))?.seq ?? 0;
+        const page = await tx.warehouseEvent.findMany({
           where: { ...scope, seq: { gt: after } }, orderBy: { seq: 'asc' }, take: 100,
           select: { seq: true, version: true, epoch: true, tick: true, kind: true, payload: true, createdAt: true },
         });
+        return after > watermark || (after < watermark && page[0]?.seq !== after + 1) ? null : page;
       }, { isolationLevel: 'RepeatableRead' });
-      if (!socket.connected || events.length === 0) return;
+      if (!socket.connected) return;
+      if (!events) { socket.emit('warehouse:reset'); socket.disconnect(true); return; }
+      if (events.length === 0) return;
       // One in-flight page per subscription. A slow peer cannot queue unlimited pages.
       const handled = await socket.timeout(4000).emitWithAck('warehouse:events', {
         ...scope, events: events.map((event) => ({ ...event, createdAt: event.createdAt.toISOString() })),
@@ -104,7 +113,10 @@ export class WarehouseGateway implements OnModuleDestroy {
       if (handled !== true) socket.disconnect(true);
       else subscription.after = events.at(-1)!.seq;
     } catch (error) {
-      if (error instanceof HttpException && [401, 404].includes(error.getStatus())) socket.disconnect(true);
+      if (error instanceof HttpException && [401, 404].includes(error.getStatus())) {
+        socket.emit('warehouse:revoked', error.getStatus());
+        socket.disconnect(true);
+      }
       // A transient read error keeps the cursor; the next sweep tries the same page.
     } finally { state.busy = false; }
   }
