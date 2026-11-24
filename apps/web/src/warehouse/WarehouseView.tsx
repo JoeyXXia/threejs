@@ -12,6 +12,9 @@ import { FleetPanel } from './FleetPanel';
 import { RobotPanel } from './RobotPanel';
 import { RealtimeStatus } from './RealtimeStatus';
 import { useRealtimeSnapshot } from './useRealtimeSnapshot';
+import { ApiError } from '../api';
+import { OperationsDashboard } from './OperationsDashboard';
+import { inventoryHeat, useOperations, type HeatMode } from './operations';
 
 const WarehouseScene = lazy(() => import('./WarehouseScene').then((module) => ({ default: module.WarehouseScene })));
 
@@ -21,6 +24,15 @@ type Props = { userId: string; spaceId: string; warehouseId: string; name: strin
 export function WarehouseView({ userId, spaceId, warehouseId, name, onUnauthorized, initialBatchId = '', warning = null }: Props) {
   const query = useRealtimeSnapshot({ userId, spaceId, warehouseId, onUnauthorized });
   const data = query.data;
+  const [heatMode, setHeatMode] = useState<HeatMode>('off');
+  const operationsQuery = useOperations(userId, spaceId, warehouseId, Boolean(data));
+  const operations = !operationsQuery.isError && operationsQuery.data?.layoutId === data?.layout.layoutVersion.id ? operationsQuery.data : undefined;
+  const heatCells = heatMode === 'inventory' && data ? inventoryHeat(data) : heatMode === 'wait' && operations && data
+    ? operations.wait.cells.filter((cell) => cell.x < data.layout.layoutVersion.width && cell.z < data.layout.layoutVersion.depth)
+      .map((cell) => ({ x: cell.x, z: cell.z, value: cell.ms })) : [];
+  useEffect(() => {
+    if (operationsQuery.error instanceof ApiError && operationsQuery.error.status === 401) onUnauthorized();
+  }, [operationsQuery.error, onUnauthorized]);
   // A route-keyed instance: switching warehouse/logout discards these UI choices.
   const [store] = useState(createSceneStore);
   const ui = useStore(store);
@@ -63,6 +75,9 @@ export function WarehouseView({ userId, spaceId, warehouseId, name, onUnauthoriz
             {([['全仓现存', data.inventory.summary.onHand], ['可用', data.inventory.summary.available], ['预占', data.inventory.summary.reserved], ['待检', data.inventory.summary.hold]] as const)
               .map(([label, value]) => <div key={label}><span>{label}</span><strong>{value}<small> 件</small></strong></div>)}
           </div>
+          <OperationsDashboard operations={operations} unavailable={operationsQuery.isError || (!!operationsQuery.data && !operations)}
+            inventoryWatermark={data.watermark} fleet={data.fleet} robot={data.simulation.runtime}
+            mode={heatMode} cells={heatCells} onMode={setHeatMode} />
           <div className="view-switch" aria-label="数据视图">
             <button aria-pressed={ui.viewMode === 'scene'} onClick={() => ui.setViewMode('scene')}>3D 场景</button>
             <button aria-pressed={ui.viewMode === 'list'} onClick={() => ui.setViewMode('list')}>2D 库存列表</button>
@@ -109,10 +124,11 @@ export function WarehouseView({ userId, spaceId, warehouseId, name, onUnauthoriz
           <p className="view-note">显示 {views.length} / {data.layout.locations.length} 个货位。筛选只控制展示，货架障碍仍保留；顶部数字为全仓汇总。</p>
           {locatingWarning && <p role="status">{target ? `预警货位：${target.code}` : '当前快照没有可定位的预警货位。库存可能已经变化或位于虚拟在途库位。'}</p>}
           {ui.viewMode === 'scene' && views.length === 0 && <p role="status" className="empty-state">当前筛选没有货位。</p>}
-          {ui.viewMode === 'scene' ? <div className="scene-canvas" aria-label="三维仓库"><SceneBoundary key={`${data.layout.layoutVersion.id}:${sceneGeneration}`}>
+          {ui.viewMode === 'scene' ? <div className="scene-canvas" aria-label="三维仓库" data-heat-mode={heatMode} data-heat-cells={heatCells.length}><SceneBoundary key={`${data.layout.layoutVersion.id}:${sceneGeneration}`}>
             <Suspense fallback={<p role="status" className="scene-fallback">正在载入 3D 场景…</p>}><WarehouseScene
               snapshot={data} fleet={data.fleet?.enabled ? data.fleet : null} robot={data.simulation?.runtime ?? null} views={views} showZones={ui.showZones} showServiceCells={ui.showServiceCells} selectedLocationId={selected?.location.id ?? null}
-              zoneFilter={ui.zoneFilter} cameraMode={ui.cameraMode} cameraRequest={cameraRequest} onSelect={ui.selectLocation} /></Suspense>
+              zoneFilter={ui.zoneFilter} cameraMode={ui.cameraMode} cameraRequest={cameraRequest} onSelect={ui.selectLocation}
+              heat={heatMode === 'off' ? null : { mode: heatMode, cells: heatCells }} /></Suspense>
           </SceneBoundary></div> : <InventoryTable views={views} selectedId={ui.selectedLocationId} onSelect={ui.selectLocation} onFocus={ui.focusLocation} />}
           <ul className="zone-legend" aria-label="库存状态图例">{Object.entries(inventoryAppearance).map(([key, entry]) => <li key={key}><i style={{ background: entry.color }} />{entry.name}</li>)}</ul>
           <p className="view-note">同位多状态按待检、预占、可用优先显示；不可分配包含到期库存。颜色同时配文字和数量。</p>

@@ -10,6 +10,7 @@ import type { CameraMode } from './scene-store';
 import { CameraRig } from './CameraRig';
 import { FleetModels } from './FleetModels';
 import { RobotModel } from './RobotModel';
+import { heatColor, type HeatCell, type HeatMode } from './operations';
 
 function ContextWatch({ onLost }: { onLost: () => void }) {
   const canvas = useThree((state) => state.gl.domElement);
@@ -22,9 +23,10 @@ function ContextWatch({ onLost }: { onLost: () => void }) {
 }
 
 type Props = { snapshot: WarehouseSnapshot; fleet?: FleetResponse | null; robot?: RobotSnapshot | null; views: LocationView[]; showZones: boolean; showServiceCells: boolean; selectedLocationId: string | null;
-  zoneFilter: ZoneFilter; cameraMode: CameraMode; cameraRequest: { locationId: string | null; sequence: number }; onSelect: (id: string | null) => void };
+  zoneFilter: ZoneFilter; cameraMode: CameraMode; cameraRequest: { locationId: string | null; sequence: number }; onSelect: (id: string | null) => void;
+  heat: { mode: Exclude<HeatMode, 'off'>; cells: HeatCell[] } | null };
 
-export function WarehouseScene({ snapshot, fleet, robot, views, showZones, showServiceCells, selectedLocationId, zoneFilter, cameraMode, cameraRequest, onSelect }: Props) {
+export function WarehouseScene({ snapshot, fleet, robot, views, showZones, showServiceCells, selectedLocationId, zoneFilter, cameraMode, cameraRequest, onSelect, heat }: Props) {
   const [lost, setLost] = useState(false);
   const { layout } = snapshot;
   const grid = layout.layoutVersion;
@@ -51,6 +53,14 @@ export function WarehouseScene({ snapshot, fleet, robot, views, showZones, showS
         const rect = rectangle(grid, zone.gridX, zone.gridZ, zone.sizeX, zone.sizeZ);
         return <mesh key={zone.id} position={[rect.position[0], .018, rect.position[2]]} rotation={[-Math.PI / 2, 0, 0]}>
           <planeGeometry args={[rect.width, rect.depth]} /><meshStandardMaterial color={zoneAppearance[zone.kind].color} transparent opacity={.32} depthWrite={false} />
+        </mesh>;
+      })}
+      {heat && heat.cells.map((cell) => {
+        const [x, , z] = cellCenter(grid, cell.x, cell.z);
+        return <mesh key={`${cell.x}:${cell.z}`} position={[x, .028, z]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={2} raycast={() => undefined}>
+          <planeGeometry args={[grid.cellSize * .9, grid.cellSize * .9]} />
+          <meshBasicMaterial color={heatColor(heat.mode, cell.value)} transparent opacity={.78} depthWrite={false}
+            depthTest={heat.mode === 'wait'} />
         </mesh>;
       })}
       {layout.racks.map((rack) => {

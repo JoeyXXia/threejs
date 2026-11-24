@@ -331,3 +331,16 @@ export const realtimeSnapshotSchema = z.object({
   }
 });
 export type RealtimeSnapshot = z.infer<typeof realtimeSnapshotSchema>;
+
+export const operationsSchema = z.object({
+  spaceId: id, warehouseId: id, layoutId: id, watermark: eventCursor,
+  pending: z.object({ inbound: quantity, outbound: quantity, count: quantity }),
+  queue: z.object({ ready: quantity, inTransit: quantity }),
+  terminal: z.object({ from: z.string().datetime(), through: z.string().datetime(), completed: quantity, cancelled: quantity }),
+  wait: z.object({
+    limit: z.literal(240), sampledTicks: quantity.max(240),
+    firstSeq: eventCursor.nullable(), lastSeq: eventCursor.nullable(),
+    cells: z.array(point.extend({ ms: quantity.positive() })),
+  }),
+});
+export type OperationsResponse = z.infer<typeof operationsSchema>;

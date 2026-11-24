@@ -103,3 +103,6 @@ td button, th button { padding: 5px 10px; font-size: 12px; }
 .robot-control { margin: .75rem 0; }
 .robot-control fieldset > p { flex-basis: 100%; margin: .35rem 0; }
 .robot-control legend { font-weight: 600; }
+.operations-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: .5rem; }
+.operations-metrics dt { font-size: .92rem; }
+.operations-metrics dd { margin: .3rem 0 .5rem; font-weight: 700; }

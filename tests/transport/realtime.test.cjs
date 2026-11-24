@@ -222,3 +222,79 @@ test('Day30 missing history expires the old cursor and fresh authorized snapshot
     await db.warehouseEvent.create({ data: { ...row, seq: 1, version: 1 } });
   }
 });
+
+test('Day31 waiting heat sums robot-ticks, not visits, cumulative counters or incompatible layouts', () => {
+  const { waitHeat } = require('../../apps/api/dist/operations');
+  const layout = { id: 'current', width: 10, depth: 8 };
+  const r = (id, waitReason, x = 2, z = 3) => ({ id, cell: { x, z }, waitReason, waitTicks: 20 });
+  const event = (seq, tick, robots, layoutId = 'current') => ({ seq, tick, payload: { layoutId, tickMs: 250, robots } });
+  const heat = waitHeat([
+    event(9, 5, [r('a', 'RESOURCE_BUSY'), r('a', 'RESOURCE_BUSY'), r('b', 'DEVICE_FAULT'), r('c', null)]),
+    event(8, 4, [r('a', 'EDGE_SWAP'), r('b', 'OCCUPIED', 5), r('out-of-bounds', 'OCCUPIED', 11)]),
+    event(7, 4, [r('a', 'TARGET_CONFLICT')]),
+    event(6, 3, [r('a', 'RESOURCE_BUSY')], 'previous'),
+    { seq: 5, tick: 2, payload: { robots: [r('a', 'OCCUPIED')] } },
+  ], layout);
+  assert.deepEqual(heat, { limit: 240, sampledTicks: 2, firstSeq: 8, lastSeq: 9,
+    cells: [{ x: 2, z: 3, ms: 500 }, { x: 5, z: 3, ms: 250 }] });
+  const recent = waitHeat(Array.from({ length: 250 }, (_, n) => event(250 - n, 250 - n, [r('a', 'OCCUPIED')])), layout);
+  assert.equal(recent.sampledTicks, 240);
+  assert.equal(recent.cells[0].ms, 60000);
+});
+
+test('Day31 HTTP counts visible orders and real task terminal events, excludes older history and enforces warehouse ACL', { timeout: 18000 }, async () => {
+  const { TransportService } = require('../../apps/api/dist/transport/transport.service');
+  const { operationsSchema } = require('../../packages/contracts');
+  const cookie = await login('admin@demo.local');
+  const actorId = (await db.user.findUniqueOrThrow({ where: { email: 'admin@demo.local' } })).id;
+  const fixture = { spaceId: scope.spaceId, warehouseId: randomUUID() };
+  const authScope = { ...fixture, actorId };
+  const path = `/spaces/${fixture.spaceId}/warehouses/${fixture.warehouseId}`;
+  await db.$transaction(async (tx) => {
+    await tx.warehouse.create({ data: { id: fixture.warehouseId, spaceId: fixture.spaceId, name: 'Day31 operations fixture' } });
+    await seedInventory(tx, fixture.spaceId, fixture.warehouseId);
+    await tx.warehouseAccess.create({ data: { ...fixture, userId: actorId, role: 'ADMIN' } });
+  });
+  async function operations() {
+    const response = await request(path + '/operations', cookie);
+    assert.equal(response.status, 200);
+    return operationsSchema.parse(await response.json());
+  }
+  const blank = await operations();
+  assert.deepEqual(blank.pending, { inbound: 0, outbound: 0, count: 0 });
+  assert.deepEqual(blank.queue, { ready: 0, inTransit: 0 });
+  assert.deepEqual(blank.wait, { limit: 240, sampledTicks: 0, firstSeq: null, lastSeq: null, cells: [] });
+  const command = () => ({ key: randomUUID(), reason: 'Day31 fixture' });
+  const post = async (url, data) => {
+    const response = await request(path + url, cookie, data);
+    assert.equal(response.status, 201, url); return response.json();
+  };
+  const choice = (await (await request(path + '/outbound-orders', cookie)).json()).recommendations[0];
+  const staging = (await (await request(path + '/simulation', cookie)).json()).staging[0].id;
+  const service = new TransportService(db);
+  const commit = async (work) => db.$transaction(async (tx) => { await lockWarehouseState(tx, fixture); return work(tx); });
+  const create = async () => {
+    const order = await post('/outbound-orders', { ...command(), skuId: choice.skuId, batchId: choice.batchId, quantity: 1 });
+    const { allocations: [allocation] } = await post('/outbound-orders/' + order.id + '/allocate', command());
+    return commit((tx) => service.createInTransaction(tx, authScope, allocation.id, staging, 'Day31 fixture'));
+  };
+  const [a, b, c] = [await create(), await create(), await create()];
+  await commit((tx) => service.moveInTransaction(tx, authScope, a.id, 'take', 'Day31 fixture'));
+  const progress = await operations();
+  assert.deepEqual(progress.queue, { ready: 2, inTransit: 1 });
+  assert.equal(progress.pending.outbound, 3);
+  await commit((tx) => service.moveInTransaction(tx, authScope, a.id, 'drop', 'Day31 fixture'));
+  await commit((tx) => service.cancelInTransaction(tx, authScope, b.id, 'Day31 fixture'));
+  // An old synthetic event tests only the time filter; no ledger state is altered.
+  await commit(async (tx) => {
+    const row = await tx.warehouseRuntime.update({ where: { warehouseId: fixture.warehouseId }, data: { seq: { increment: 1 }, version: { increment: 1 } } });
+    await tx.warehouseEvent.create({ data: { ...fixture, seq: row.seq, tick: row.tick, kind: 'TRANSPORT_DROPPED',
+      payload: {}, createdAt: new Date(Date.now() - 2 * 3600000) } });
+  });
+  const terminal = await operations();
+  assert.equal(terminal.terminal.completed, 1); assert.equal(terminal.terminal.cancelled, 1);
+  assert.equal(Date.parse(terminal.terminal.through) - Date.parse(terminal.terminal.from), 3600000);
+  assert.deepEqual(terminal.queue, { ready: 1, inTransit: 0 });
+  assert.ok(c.id);
+  assert.equal((await request(`/spaces/${ids.spaceB}/warehouses/${ids.warehouseB}/operations`, cookie)).status, 404);
+});

@@ -331,6 +331,7 @@ export class FleetService implements OnModuleInit, OnModuleDestroy {
           fleet: json({ format: 1, state: p.proposal.state, from: e.state.robots.map((r) => r.simulation.robot.position) }) } });
         const previousAlerts = new Set(fleetAlerts(e.state).map((a) => a.key));
         await appendWarehouseEvent(tx, p.scope, 'FLEET_TICK', { tick: p.proposal.state.tick,
+          layoutId: p.proposal.state.robots[0]!.simulation.map.layoutId, tickMs: p.proposal.state.robots[0]!.simulation.tickMs,
           newAlerts: fleetAlerts(p.proposal.state).filter((a) => !previousAlerts.has(a.key)),
           resources: p.proposal.state.resources ?? [],
           navigation: navigationOf(p.proposal.state),

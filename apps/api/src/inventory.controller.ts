@@ -6,6 +6,7 @@ import { DatabaseService } from './database.service';
 import { FleetService } from './simulation/fleet.service';
 import { SimulationService } from './simulation/simulation.service';
 import { AuthService } from './auth/auth.service';
+import { readOperations } from './operations';
 import type { LayoutResponse, InventoryResponse, RealtimeSnapshot } from '@warehouse-twin/contracts';
 
 function physicalKind(kind: LayoutResponse['locations'][number]['kind'] | 'TRANSIT') {
@@ -101,6 +102,11 @@ export class InventoryController {
     return { spaceId, warehouseId, watermark, layoutId, layoutVersion: layout.version, asOf: asOf.toISOString(), balances, locationTotals,
       summary: { onHand: balances.reduce((sum, row) => sum + row.onHand, 0), reserved: balances.reduce((sum, row) => sum + row.reserved, 0),
         available: balances.reduce((sum, row) => sum + row.available, 0), hold: balances.filter((row) => row.quality === 'HOLD').reduce((sum, row) => sum + row.onHand, 0) } } satisfies InventoryResponse;
+  }
+
+  @Get('operations')
+  operations(@Req() req: AuthRequest, @Param('spaceId') spaceId: string, @Param('warehouseId') warehouseId: string) {
+    return this.snapshot(req, spaceId, warehouseId, (tx, layoutId) => readOperations(tx, { spaceId, warehouseId }, layoutId), true);
   }
 
   @Get('snapshot')
