@@ -101,7 +101,27 @@ model WarehouseEvent {
   payload Json
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   runtime WarehouseRuntime @relation(fields: [spaceId, warehouseId], references: [spaceId, warehouseId], onDelete: Restrict)
+  replayFrame WarehouseReplayFrame?
   @@id([warehouseId, seq])
+}
+
+model WarehouseReplayFrame {
+  warehouseId String @db.Uuid
+  spaceId String @db.Uuid
+  seq Int
+  tick Int
+  layoutId String @db.Uuid
+  layoutVersion Int
+  mode String
+  anchor Boolean
+  capturedAt DateTime @default(now()) @db.Timestamptz(3)
+  state Json
+  event WarehouseEvent @relation(fields: [warehouseId, seq], references: [warehouseId, seq], onDelete: Restrict)
+  layout LayoutVersion @relation(fields: [spaceId, warehouseId, layoutId], references: [spaceId, warehouseId, id], onDelete: Restrict)
+  @@id([warehouseId, seq])
+  @@unique([warehouseId, tick])
+  @@index([spaceId, warehouseId, capturedAt, seq])
+  @@index([warehouseId, anchor, seq])
 }
 
 enum ZoneKind {
@@ -177,6 +197,7 @@ model LayoutVersion {
   racks Rack[]
   placements LayoutLocation[]
   countOrders CountOrder[]
+  replayFrames WarehouseReplayFrame[]
   @@unique([spaceId, warehouseId, id])
   @@unique([spaceId, warehouseId, version])
 }

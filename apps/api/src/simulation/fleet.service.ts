@@ -8,6 +8,7 @@ import { TransportService } from '../transport/transport.service';
 import { PutawayService } from '../transport/putaway.service';
 import { objectInput, textInput, uuidInput } from '../auth/input';
 import { appendWarehouseEvent, databaseNow, lockWarehouseState } from '../warehouse-state';
+import { recordReplayFrame } from '../replay';
 
 type Scope = { spaceId: string; warehouseId: string; actorId: string };
 type Envelope = { format: 1; state: FleetState; from: readonly Cell[] };
@@ -330,12 +331,28 @@ export class FleetService implements OnModuleInit, OnModuleDestroy {
         await tx.warehouseRuntime.update({ where: { warehouseId: p.scope.warehouseId }, data: { tick: p.proposal.state.tick,
           fleet: json({ format: 1, state: p.proposal.state, from: e.state.robots.map((r) => r.simulation.robot.position) }) } });
         const previousAlerts = new Set(fleetAlerts(e.state).map((a) => a.key));
-        await appendWarehouseEvent(tx, p.scope, 'FLEET_TICK', { tick: p.proposal.state.tick,
+        const seq = await appendWarehouseEvent(tx, p.scope, 'FLEET_TICK', { tick: p.proposal.state.tick,
           layoutId: p.proposal.state.robots[0]!.simulation.map.layoutId, tickMs: p.proposal.state.robots[0]!.simulation.tickMs,
           newAlerts: fleetAlerts(p.proposal.state).filter((a) => !previousAlerts.has(a.key)),
           resources: p.proposal.state.resources ?? [],
           navigation: navigationOf(p.proposal.state),
           robots: p.proposal.state.robots.map((r) => ({ id: r.id, cell: r.simulation.robot.position, battery: r.simulation.robot.battery, charge: r.charge ?? null, taskId: r.work?.taskId ?? null, phase: r.work?.phase ?? 'IDLE', waitTicks: r.waitTicks, waitReason: r.waitReason, resourceWaitId: r.resourceWaitId ?? null, blockerId: r.blockerId, navigationIssue: r.navigationIssue ?? null, deviceFault: r.deviceFault ?? null })) });
+        const state = p.proposal.state, map = state.robots[0]!.simulation.map;
+        const completedIds = state.robots.flatMap((r) => r.work && !claims.some((c) => c.id === r.work!.taskId) ? [r.work.taskId] : []);
+        const previous = completedIds.length ? await tx.fleetClaim.findMany({ where: { ...p.scope, id: { in: completedIds } } }) : [];
+        await recordReplayFrame(tx, p.scope, {
+          seq, tick: state.tick, layoutId: map.layoutId, layoutVersion: map.version, mode: 'FLEET',
+          robots: state.robots.map((r, i) => {
+            const claim = [...claims, ...previous].find((c) => c.id === r.work?.taskId);
+            const effect = p.proposal.effects.find((item) => item.robotId === r.id);
+            return { id: r.id, cell: r.simulation.robot.position, from: e.state.robots[i]!.simulation.robot.position,
+              phase: r.work?.phase ?? 'IDLE', battery: r.simulation.robot.battery, taskId: r.work?.taskId ?? null,
+              ledgerTaskId: claim?.taskId ?? null, carrying: effect ? effect.stage === 'take' : claim?.loaded ?? false,
+              fault: !!r.deviceFault || r.work?.phase === 'ERROR', charging: !!r.charge, waitReason: r.waitReason };
+          }),
+          definition: { navigation: { ...navigationOf(state), closed: [...navigationOf(state).closed] },
+            resources: (state.resources ?? []).map((r) => ({ ...r, cells: [...r.cells] })) },
+        });
       }
       const now = await databaseNow(tx);
       if (row.leaseUntil! <= now) throw new FleetFenceConflict('批次执行期间租约已过期');

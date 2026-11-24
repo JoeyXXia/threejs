@@ -167,7 +167,8 @@ async function durableEffects() {
     movements: await db.inventoryMovement.count({ where: { warehouseId: scope.warehouseId } }),
     audit: await db.auditLog.count({ where: { warehouseId: scope.warehouseId } }),
     tasks: await db.transportTask.findMany({ where: { warehouseId: scope.warehouseId } }),
-    events: await db.warehouseEvent.count({ where: { warehouseId: scope.warehouseId } }) };
+    events: await db.warehouseEvent.count({ where: { warehouseId: scope.warehouseId } }),
+    frames: await db.warehouseReplayFrame.count({ where: { warehouseId: scope.warehouseId } }) };
 }
 
 test('two real clients cannot share a live lease; takeover increments epoch and fences the old computation', async () => {
@@ -220,8 +221,20 @@ test('failure appending a tick event rolls back take, checkpoint, audit and seq;
   await db.$executeRawUnsafe('CREATE TRIGGER day19_reject_tick BEFORE INSERT ON "WarehouseEvent" FOR EACH ROW EXECUTE FUNCTION day19_reject_tick()');
   try { await assert.rejects(service.commit(prepared)); assert.deepEqual(await durableEffects(), before); }
   finally { await db.$executeRawUnsafe('DROP TRIGGER day19_reject_tick ON "WarehouseEvent"'); await db.$executeRawUnsafe('DROP FUNCTION day19_reject_tick()'); }
+  // Fail after ledger and tick-event writes, at the replay insert itself.
+  await db.$executeRawUnsafe(`CREATE FUNCTION day32_reject_frame() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+    IF NEW."warehouseId"='${scope.warehouseId}'::uuid THEN RAISE EXCEPTION 'injected replay frame failure'; END IF; RETURN NEW; END $$`);
+  await db.$executeRawUnsafe('CREATE TRIGGER day32_reject_frame BEFORE INSERT ON "WarehouseReplayFrame" FOR EACH ROW EXECUTE FUNCTION day32_reject_frame()');
+  try {
+    await assert.rejects(service.commit(prepared), /injected replay frame failure/);
+    assert.deepEqual(await durableEffects(), before);
+  } finally {
+    await db.$executeRawUnsafe('DROP TRIGGER day32_reject_frame ON "WarehouseReplayFrame"');
+    await db.$executeRawUnsafe('DROP FUNCTION day32_reject_frame()');
+  }
   await service.commit(prepared);
   assert.equal((await current()).carrying, true);
+  assert.equal((await durableEffects()).frames, before.frames + 1);
   const all = (await service.events(scope, 0)).events;
   assert.deepEqual(all.map((e) => e.seq), Array.from({ length: all.length }, (_, i) => i + 1));
   await runUntil('COMPLETED');

@@ -298,3 +298,146 @@ test('Day31 HTTP counts visible orders and real task terminal events, excludes o
   assert.ok(c.id);
   assert.equal((await request(`/spaces/${ids.spaceB}/warehouses/${ids.warehouseB}/operations`, cookie)).status, 404);
 });
+
+test('Day32 fleet history keeps all robots, closures and a pinned event horizon across pages', { timeout: 18000 }, async () => {
+  const { historyPageSchema } = require('../../packages/contracts');
+  const cookie = await login('admin@demo.local');
+  const closure = { x: 0, z: 0 };
+  const change = await request(endpoint + '/fleet/navigation', cookie, { cells: [closure], closed: true, expectedRevision: 0, reason: 'Day32 history fixture' });
+  assert.equal(change.status, 201);
+  const changed = await change.json();
+  await until(() => db.warehouseReplayFrame.findFirst({ where: { ...scope, seq: { gt: changed.watermark } } }));
+  const params = new URLSearchParams({ from: new Date(Date.now() - 60000).toISOString(), to: new Date(Date.now() + 60000).toISOString(), limit: '2' });
+  const get = async () => {
+    const response = await request(endpoint + '/history?' + params, cookie);
+    assert.equal(response.status, 200); return historyPageSchema.parse(await response.json());
+  };
+  let page = await get();
+  const { baseline, through } = page;
+  assert.equal(baseline.mode, 'FLEET');
+  assert.equal(baseline.tick, 1);
+  assert.equal(baseline.state.robots.length, 3);
+  const events = [], frames = [];
+  await until(() => db.warehouseReplayFrame.findFirst({ where: { ...scope, seq: { gt: through } } }));
+  for (;;) {
+    events.push(...page.events); frames.push(...page.frames);
+    if (page.nextAfter === null) break;
+    assert.ok(page.events.length <= 2);
+    params.set('after', String(page.nextAfter)); params.set('through', String(through));
+    page = await get();
+    assert.equal(page.through, through); assert.equal(page.baseline.seq, baseline.seq);
+  }
+  assert.deepEqual(events.map((e) => e.seq), Array.from({ length: through - baseline.seq }, (_, i) => baseline.seq + i + 1));
+  assert.ok(events.some((e) => e.kind === 'FLEET_NAVIGATION_CHANGED' && e.payload.navigation.closed.some((c) => c.x === closure.x && c.z === closure.z)));
+  assert.ok(events.some((e) => e.kind === 'FLEET_FAULT'));
+  assert.ok(events.filter((e) => e.kind === 'FLEET_TICK').every((e) => e.payload === null && frames.some((f) => f.seq === e.seq)));
+  assert.ok(frames.some((f) => f.state.robots.some((r) => r.fault)));
+  assert.ok(frames.every((f) => f.state.robots.length === 3));
+  let navigation = baseline.state.definition.navigation;
+  for (const event of events) {
+    if (event.kind === 'FLEET_NAVIGATION_CHANGED') navigation = event.payload.navigation;
+    const anchor = frames.find((frame) => frame.seq === event.seq && frame.anchor);
+    if (anchor) navigation = anchor.state.definition.navigation;
+  }
+  const lastFrame = frames.at(-1);
+  const originalTick = await db.warehouseEvent.findUniqueOrThrow({
+    where: { warehouseId_seq: { warehouseId: scope.warehouseId, seq: lastFrame.seq } },
+  });
+  assert.deepEqual(navigation, originalTick.payload.navigation);
+  assert.deepEqual(lastFrame.state.robots.map(({ id, cell, phase }) => ({ id, cell, phase })),
+    originalTick.payload.robots.map(({ id, cell, phase }) => ({ id, cell, phase })));
+  const denied = `/spaces/${ids.spaceB}/warehouses/${ids.warehouseB}/history?${params}`;
+  assert.equal((await request(denied, cookie)).status, 404);
+  assert.equal((await request(endpoint + '/history?' + new URLSearchParams({ ...Object.fromEntries(params), limit: '101' }), cookie)).status, 400);
+  assert.equal((await request(endpoint + '/history?' + new URLSearchParams({ from: '2026-10-01T00:00:00Z', to: '2026-10-02T00:00:01Z' }), cookie)).status, 400);
+  require('node:fs').writeFileSync('reports/day32-fleet-history.json', JSON.stringify({
+    capturedAt: new Date().toISOString(), baseline: baseline.seq, through, eventCount: events.length, trackCount: frames.length,
+    robotCount: lastFrame.state.robots.length, navigation,
+  }));
+});
+
+test('Day32 single-robot history captures post-ledger inventory, cadence anchors, and retained old layout', { timeout: 25000 }, async () => {
+  const { SimulationService } = require('../../apps/api/dist/simulation/simulation.service');
+  const { TransportService } = require('../../apps/api/dist/transport/transport.service');
+  const { replayFrameSchema, layoutSchema, historyPageSchema } = require('../../packages/contracts');
+  const cookie = await login('admin@demo.local');
+  const actorId = (await db.user.findUniqueOrThrow({ where: { email: 'admin@demo.local' } })).id;
+  const fixture = { spaceId: scope.spaceId, warehouseId: randomUUID() }, authScope = { ...fixture, actorId };
+  const path = `/spaces/${fixture.spaceId}/warehouses/${fixture.warehouseId}`;
+  await db.$transaction(async (tx) => {
+    await tx.warehouse.create({ data: { id: fixture.warehouseId, spaceId: fixture.spaceId, name: 'Day32 layout fixture' } });
+    await seedInventory(tx, fixture.spaceId, fixture.warehouseId);
+    await tx.warehouseAccess.create({ data: { ...fixture, role: 'ADMIN', userId: actorId } });
+  });
+  const read = async (p) => {
+    const response = await request(path + p, cookie);
+    assert.equal(response.status, 200, p); return response.json();
+  };
+  const post = async (p, value) => {
+    const response = await request(path + p, cookie, value);
+    assert.equal(response.status, 201, p); return response.json();
+  };
+  const choice = (await read('/outbound-orders')).recommendations[0], staging = (await read('/simulation')).staging[0].id;
+  const service = new SimulationService(db, new TransportService(db));
+  const command = () => ({ key: randomUUID(), reason: 'Day32 fixture' });
+  const start = async () => {
+    const order = await post('/outbound-orders', { ...command(), skuId: choice.skuId, batchId: choice.batchId, quantity: 1 });
+    const allocated = await post('/outbound-orders/' + order.id + '/allocate', command());
+    return service.start(authScope, { allocationId: allocated.allocations[0].id, stagingLocationId: staging, reason: 'Day32 fixture' });
+  };
+  const tick = async () => service.commit(await service.prepare(fixture.warehouseId));
+  const rows = async () => (await db.warehouseReplayFrame.findMany({ where: fixture, orderBy: { tick: 'asc' } }))
+    .map((row) => replayFrameSchema.parse({ ...row, capturedAt: row.capturedAt.toISOString() }));
+  try {
+    const original = layoutSchema.parse(await read('/layout'));
+    let result = await start();
+    for (let i = 0; i < 150 && result.phase !== 'COMPLETED'; i++) result = await tick();
+    assert.equal(result.phase, 'COMPLETED');
+    const initial = await rows();
+    assert.equal(initial.length, result.tick);
+    assert.deepEqual(initial.filter((f) => f.anchor).map((f) => f.tick), [1, ...initial.filter((f) => f.tick % 20 === 0).map((f) => f.tick)]);
+    const carrying = initial.find((f) => f.state.robots[0].carrying);
+    assert.ok(carrying); assert.deepEqual(carrying.state.inventory, (await read('/inventory')).summary);
+    const old = original.layoutVersion.id, replacement = randomUUID();
+    const rename = await fetch(apiUrl + path, { method: 'PATCH', headers: { Cookie: cookie, 'Content-Type': 'application/json', 'X-Requested-With': 'WarehouseTwin' },
+      body: JSON.stringify({ name: 'Day32 renamed after last tick', version: 0, reason: 'Day32 fixture' }) });
+    assert.equal(rename.status, 200);
+    const tail = historyPageSchema.parse(await read('/history?' + new URLSearchParams({
+      from: initial.at(-1).capturedAt, to: new Date(Date.now() + 1000).toISOString(),
+    })));
+    assert.ok(tail.through > initial.at(-1).seq);
+    assert.equal(tail.events.at(-1).kind, 'WAREHOUSE_RENAMED');
+    await db.$transaction(async (tx) => {
+      await lockWarehouseState(tx, fixture);
+      const layout = await tx.layoutVersion.findUniqueOrThrow({ where: { id: old } });
+      await tx.layoutVersion.create({ data: { ...layout, id: replacement, version: 2, status: 'DRAFT' } });
+      const zones = new Map(), racks = new Map();
+      for (const row of await tx.layoutZone.findMany({ where: { layoutId: old } })) {
+        const id = randomUUID(); zones.set(row.id, id);
+        await tx.layoutZone.create({ data: { ...row, id, layoutId: replacement } });
+      }
+      for (const row of await tx.rack.findMany({ where: { layoutId: old } })) {
+        const id = randomUUID(); racks.set(row.id, id);
+        await tx.rack.create({ data: { ...row, id, layoutId: replacement, zoneId: zones.get(row.zoneId) } });
+      }
+      for (const row of await tx.layoutLocation.findMany({ where: { layoutId: old } })) {
+        await tx.layoutLocation.create({ data: { ...row, layoutId: replacement, zoneId: zones.get(row.zoneId), rackId: racks.get(row.rackId) ?? null } });
+      }
+      await tx.layoutVersion.update({ where: { id: replacement }, data: { status: 'PUBLISHED' } });
+      await tx.warehouse.update({ where: { id: fixture.warehouseId }, data: { activeLayoutId: replacement } });
+    });
+    assert.equal((await read('/layout')).layoutVersion.id, replacement);
+    assert.deepEqual(await read('/history/layouts/' + old), original);
+    assert.equal((await request(path + '/history/layouts/' + replacement, cookie)).status, 404);
+    await start(); await tick();
+    const next = (await rows()).find((f) => f.layoutId === replacement);
+    assert.ok(next?.anchor); assert.equal(next.layoutVersion, 2);
+    const point = new URLSearchParams({ from: carrying.capturedAt, to: carrying.capturedAt });
+    const page = historyPageSchema.parse(await read('/history?' + point));
+    assert.ok(page.baseline.seq <= carrying.seq && page.through === carrying.seq);
+    require('node:fs').writeFileSync('reports/day32-single-history.json', JSON.stringify({
+      capturedAt: new Date().toISOString(), frameCount: initial.length, anchors: initial.filter((f) => f.anchor).map((f) => f.tick),
+      carrying: { tick: carrying.tick, inventory: carrying.state.inventory }, replacementAnchor: next.tick, afterLastTick: tail.events.at(-1).kind,
+    }));
+  } finally { await service.onModuleDestroy(); }
+});

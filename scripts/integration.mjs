@@ -63,11 +63,24 @@ try {
     '--test-reporter=tap', '--test-reporter-destination=reports/integration-transport.tap', 'tests/transport/transport.test.cjs', 'tests/transport/simulation.test.cjs', 'tests/transport/putaway.test.cjs', 'tests/transport/fleet.test.cjs', 'tests/transport/realtime.test.cjs']);
   await run(['node_modules/jest/bin/jest.js', '--config', 'tests/integration/jest.config.cjs', '--runInBand', '--json', '--outputFile', 'reports/integration-jest.json']);
   // Verify persisted rows after a real database restart, once all HTTP test processes have closed.
+  const urls = [databaseUrl, inboundDatabaseUrl, upgradeDatabaseUrl, realtimeDatabaseUrl];
+  const replayDigest = async (db) => (await db.$queryRaw`
+    SELECT count(*)::integer AS frames, count(*) FILTER (WHERE anchor)::integer AS anchors,
+      md5(COALESCE(string_agg(md5(to_jsonb(f)::text), '' ORDER BY f."warehouseId", f.seq), '')) AS digest
+    FROM "WarehouseReplayFrame" f`
+  )[0];
+  const beforeReplay = [];
+  for (const datasourceUrl of urls) {
+    const db = new database.PrismaClient({ datasourceUrl });
+    try { beforeReplay.push(await replayDigest(db)); } finally { await db.$disconnect(); }
+  }
   await pg.stop(); await pg.start();
   const results = [];
-  for (const datasourceUrl of [databaseUrl, inboundDatabaseUrl, upgradeDatabaseUrl, realtimeDatabaseUrl]) {
+  for (const [index, datasourceUrl] of urls.entries()) {
   const db = new database.PrismaClient({ datasourceUrl });
   try {
+    const replay = await replayDigest(db);
+    if (JSON.stringify(replay) !== JSON.stringify(beforeReplay[index])) throw new Error('Replay frames changed after PostgreSQL restart');
     const evidence = await db.$transaction(async (tx) => {
       const mismatches = await ledger.reconcile(tx);
       const reservationMismatches = await ledger.reconcileReservations(tx);
@@ -103,7 +116,7 @@ try {
         mismatches, reservationMismatches, eventMismatches, checkpointMismatches, persistedCheckpoints: checkpoints.length + fleets.length, persistedFleets: fleets.length,
         fleetsWithResources: fleets.filter((r) => r.fleet.state.resources?.length).length, warehouses: samples };
     }, { isolationLevel: 'RepeatableRead' });
-    results.push({ database: new URL(datasourceUrl).pathname.slice(1), ...evidence });
+    results.push({ database: new URL(datasourceUrl).pathname.slice(1), ...evidence, replay });
     if (!evidence.consistent) throw new Error('Post-restart inventory reconciliation failed');
     console.log('PASS: database restart, physical ledger, reservation/order, transit and staging reconciliation');
   } finally { await db.$disconnect(); }

@@ -344,3 +344,27 @@ export const operationsSchema = z.object({
   }),
 });
 export type OperationsResponse = z.infer<typeof operationsSchema>;
+
+export const replayFrameSchema = z.object({
+  seq: eventCursor.positive(), tick: eventCursor.positive(), layoutId: id, layoutVersion: quantity.positive(),
+  mode: z.enum(['SINGLE', 'FLEET']), anchor: z.boolean(), capturedAt: z.string().datetime(),
+  state: z.object({
+    format: z.literal(1),
+    inventory: z.object({ ...totals, hold: quantity }),
+    robots: z.array(z.object({
+      id: z.string(), cell: point, from: point, phase: z.string(), battery: quantity.max(10000),
+      taskId: id.nullable(), ledgerTaskId: id.nullable(), carrying: z.boolean(), fault: z.boolean(), charging: z.boolean(),
+      waitReason: z.string().nullable(),
+    })).min(1).max(5),
+    owners: z.array(z.object({ id: z.string(), ownerId: z.string().nullable() })).max(32),
+    definition: z.object({ navigation: navigationSchema, resources: z.array(fleetResourceSchema).max(32) }).optional(),
+  }),
+}).refine((frame) => frame.anchor === (frame.state.definition !== undefined), 'Replay anchor definition missing or unexpected');
+export type ReplayFrame = z.infer<typeof replayFrameSchema>;
+
+export const historyPageSchema = z.object({
+  ...realtimeScope, first: eventCursor.nullable(), through: eventCursor.nullable(),
+  baseline: replayFrameSchema.nullable(), events: z.array(warehouseEvent).max(100),
+  frames: z.array(replayFrameSchema).max(100), nextAfter: eventCursor.nullable(),
+});
+export type HistoryPage = z.infer<typeof historyPageSchema>;

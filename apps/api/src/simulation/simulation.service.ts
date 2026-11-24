@@ -8,6 +8,7 @@ import { PutawayService } from '../transport/putaway.service';
 import { TransportService } from '../transport/transport.service';
 import { objectInput, textInput, uuidInput } from '../auth/input';
 import { appendWarehouseEvent, databaseNow, lockWarehouseState } from '../warehouse-state';
+import { recordReplayFrame } from '../replay';
 
 type Scope = { actorId: string; spaceId: string; warehouseId: string };
 type Checkpoint = { format: 1; actorId: string; taskId: string; kind: 'OUTBOUND' | 'PUTAWAY'; inboundOrderId: string | null; allocationId: string | null; stagingId: string;
@@ -230,9 +231,17 @@ export class SimulationService implements OnModuleInit, OnModuleDestroy {
           loaded: prepared.proposal.effect ? prepared.proposal.effect === 'take' : checkpoint.loaded };
       if (!failure && prepared.proposal.effect) await (checkpoint.kind === 'PUTAWAY' ? this.putaway : this.transport).moveInTransaction(tx, scope, checkpoint.taskId, prepared.proposal.effect, '软件机器人阶段过账');
       await tx.warehouseRuntime.update({ where: { warehouseId: scope.warehouseId }, data: { tick: next.task.simulation.tick, checkpoint: json(next) } });
-      await appendWarehouseEvent(tx, scope, failure ? 'SIM_ERROR' : 'SIM_TICK', json(this.snapshot(next)));
+      const snapshot = this.snapshot(next);
+      const seq = await appendWarehouseEvent(tx, scope, failure ? 'SIM_ERROR' : 'SIM_TICK', json(snapshot));
+      if (!failure) await recordReplayFrame(tx, { spaceId: scope.spaceId, warehouseId: scope.warehouseId }, {
+        seq, tick: snapshot.tick, layoutId: snapshot.layoutId, layoutVersion: snapshot.layoutVersion, mode: 'SINGLE',
+        robots: [{ id: 'robot-1', cell: snapshot.to, from: snapshot.from, phase: snapshot.phase, battery: snapshot.battery,
+          taskId: snapshot.taskId, ledgerTaskId: snapshot.taskId, carrying: snapshot.carrying,
+          fault: snapshot.phase === 'ERROR', charging: false, waitReason: null }],
+        definition: { navigation: { revision: 0, closed: [] }, resources: [] },
+      });
       await this.renew(tx, row);
-      return this.snapshot(next);
+      return snapshot;
     }, { timeout: 15000 });
   }
   advance(): Promise<void> {

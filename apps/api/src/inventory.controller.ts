@@ -1,4 +1,4 @@
-import { Controller, Get, Inject, NotFoundException, Param, Req, UseGuards } from '@nestjs/common';
+import { Controller, Get, Inject, NotFoundException, Param, Query, Req, UseGuards } from '@nestjs/common';
 import { Prisma } from '@warehouse-twin/database';
 import { AuthGuard, AuthRequest } from './auth/auth.guard';
 import { uuidInput } from './auth/input';
@@ -7,6 +7,7 @@ import { FleetService } from './simulation/fleet.service';
 import { SimulationService } from './simulation/simulation.service';
 import { AuthService } from './auth/auth.service';
 import { readOperations } from './operations';
+import { readHistory, replayQuery } from './replay';
 import type { LayoutResponse, InventoryResponse, RealtimeSnapshot } from '@warehouse-twin/contracts';
 
 function physicalKind(kind: LayoutResponse['locations'][number]['kind'] | 'TRANSIT') {
@@ -107,6 +108,24 @@ export class InventoryController {
   @Get('operations')
   operations(@Req() req: AuthRequest, @Param('spaceId') spaceId: string, @Param('warehouseId') warehouseId: string) {
     return this.snapshot(req, spaceId, warehouseId, (tx, layoutId) => readOperations(tx, { spaceId, warehouseId }, layoutId), true);
+  }
+
+  @Get('history')
+  history(@Req() req: AuthRequest, @Param('spaceId') spaceId: string, @Param('warehouseId') warehouseId: string,
+    @Query() query: Record<string, unknown>) {
+    return this.snapshot(req, spaceId, warehouseId, (tx) => readHistory(tx, { spaceId, warehouseId }, replayQuery(query)), true);
+  }
+
+  @Get('history/layouts/:layoutId')
+  historyLayout(@Req() req: AuthRequest, @Param('spaceId') spaceId: string, @Param('warehouseId') warehouseId: string,
+    @Param('layoutId') layoutId: string) {
+    return this.snapshot(req, spaceId, warehouseId, async (tx) => {
+      uuidInput(layoutId);
+      if (!await tx.warehouseReplayFrame.findFirst({ where: { spaceId, warehouseId, layoutId }, select: { seq: true } })) {
+        throw new NotFoundException('没有该布局的历史');
+      }
+      return this.readLayout(tx, spaceId, warehouseId, layoutId);
+    }, true);
   }
 
   @Get('snapshot')
