@@ -106,3 +106,8 @@ td button, th button { padding: 5px 10px; font-size: 12px; }
 .operations-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: .5rem; }
 .operations-metrics dt { font-size: .92rem; }
 .operations-metrics dd { margin: .3rem 0 .5rem; font-weight: 700; }
+.replay-controls { display: flex; flex-wrap: wrap; gap: .85rem; align-items: center; margin-block: .85rem; }
+.replay-controls label { display: inline-flex; align-items: center; flex-wrap: wrap; gap: .35rem; }
+.replay-controls input[type="range"] { width: min(52vw, 24rem); }
+.replay-table td { white-space: normal; overflow-wrap: anywhere; }
+.replay-table tr[data-highlighted="true"] { background: #fce9b4; }

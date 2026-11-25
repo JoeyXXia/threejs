@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
 import { Grid } from '@react-three/drei';
-import type { FleetResponse, RobotSnapshot, WarehouseSnapshot } from '@warehouse-twin/contracts';
+import type { FleetResponse, ReplayFrame, RobotSnapshot, WarehouseSnapshot } from '@warehouse-twin/contracts';
 import { cellCenter, rectangle } from './coordinates';
 import { zoneAppearance } from './zone-palette';
 import { inventoryAppearance } from './inventory-view';
@@ -22,11 +22,12 @@ function ContextWatch({ onLost }: { onLost: () => void }) {
   return null;
 }
 
-type Props = { snapshot: WarehouseSnapshot; fleet?: FleetResponse | null; robot?: RobotSnapshot | null; views: LocationView[]; showZones: boolean; showServiceCells: boolean; selectedLocationId: string | null;
+type Props = { snapshot: Pick<WarehouseSnapshot, 'layout'>; fleet?: FleetResponse | null; robot?: RobotSnapshot | null; views: LocationView[]; showZones: boolean; showServiceCells: boolean; selectedLocationId: string | null;
   zoneFilter: ZoneFilter; cameraMode: CameraMode; cameraRequest: { locationId: string | null; sequence: number }; onSelect: (id: string | null) => void;
-  heat: { mode: Exclude<HeatMode, 'off'>; cells: HeatCell[] } | null };
+  heat: { mode: Exclude<HeatMode, 'off'>; cells: HeatCell[] } | null;
+  replay?: { robots: ReplayFrame['state']['robots']; closed: { x: number; z: number }[]; task: string } };
 
-export function WarehouseScene({ snapshot, fleet, robot, views, showZones, showServiceCells, selectedLocationId, zoneFilter, cameraMode, cameraRequest, onSelect, heat }: Props) {
+export function WarehouseScene({ snapshot, fleet, robot, views, showZones, showServiceCells, selectedLocationId, zoneFilter, cameraMode, cameraRequest, onSelect, heat, replay }: Props) {
   const [lost, setLost] = useState(false);
   const { layout } = snapshot;
   const grid = layout.layoutVersion;
@@ -97,7 +98,23 @@ export function WarehouseScene({ snapshot, fleet, robot, views, showZones, showS
         </mesh>;
       })}
       <CameraRig layout={layout} mode={cameraMode} request={cameraRequest} />
-      {fleet && fleet.layoutId === grid.id && fleet.layoutVersion === grid.version && <FleetModels fleet={fleet} grid={grid} />}
-      {!fleet && robot && robot.layoutId === grid.id && robot.layoutVersion === grid.version && <RobotModel key={robot.taskId} snapshot={robot} grid={grid} />}
+      {replay && <>
+        {replay.closed.map((c) => {
+          const [x, , z] = cellCenter(grid, c.x, c.z);
+          return <mesh key={`${c.x}:${c.z}`} position={[x, .04, z]}><boxGeometry args={[grid.cellSize * .9, .08, grid.cellSize * .9]} />
+            <meshStandardMaterial color="#c43832" wireframe /></mesh>;
+        })}
+        {replay.robots.map((r) => {
+          const [x, , z] = cellCenter(grid, r.cell.x, r.cell.z);
+          const highlighted = replay.task && r.taskId === replay.task;
+          return <group key={r.id} position={[x, .24, z]}>
+            <mesh><boxGeometry args={[grid.cellSize * .6, .35, grid.cellSize * .7]} />
+              <meshStandardMaterial color={highlighted ? '#f0a923' : r.fault ? '#ac3e38' : '#246c9d'} /></mesh>
+            {r.carrying && <mesh position={[0, .33, 0]}><boxGeometry args={[.35, .3, .35]} /><meshStandardMaterial color="#b17f46" /></mesh>}
+          </group>;
+        })}
+      </>}
+      {!replay && fleet && fleet.layoutId === grid.id && fleet.layoutVersion === grid.version && <FleetModels fleet={fleet} grid={grid} />}
+      {!replay && !fleet && robot && robot.layoutId === grid.id && robot.layoutVersion === grid.version && <RobotModel key={robot.taskId} snapshot={robot} grid={grid} />}
     </Canvas>;
 }

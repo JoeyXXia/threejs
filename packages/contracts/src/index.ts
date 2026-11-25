@@ -345,6 +345,7 @@ export const operationsSchema = z.object({
 });
 export type OperationsResponse = z.infer<typeof operationsSchema>;
 
+export const replayDefinitionSchema = z.object({ navigation: navigationSchema, resources: z.array(fleetResourceSchema).max(32) });
 export const replayFrameSchema = z.object({
   seq: eventCursor.positive(), tick: eventCursor.positive(), layoutId: id, layoutVersion: quantity.positive(),
   mode: z.enum(['SINGLE', 'FLEET']), anchor: z.boolean(), capturedAt: z.string().datetime(),
@@ -357,7 +358,7 @@ export const replayFrameSchema = z.object({
       waitReason: z.string().nullable(),
     })).min(1).max(5),
     owners: z.array(z.object({ id: z.string(), ownerId: z.string().nullable() })).max(32),
-    definition: z.object({ navigation: navigationSchema, resources: z.array(fleetResourceSchema).max(32) }).optional(),
+    definition: replayDefinitionSchema.optional(),
   }),
 }).refine((frame) => frame.anchor === (frame.state.definition !== undefined), 'Replay anchor definition missing or unexpected');
 export type ReplayFrame = z.infer<typeof replayFrameSchema>;

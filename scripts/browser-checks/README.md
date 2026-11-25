@@ -278,3 +278,7 @@ pw28 close
 ## Day 31 运营指标和两种热力
 
 全新隔离 QA 登录管理员后，运行 `run-code --filename scripts/browser-checks/day31-operations.js`。先验证零分母与全仓库存层，再通过真实 API 制造单容量通道竞争，同时核对设备故障不等于拥堵；按事件窗口复算热力。截图留在 `output/playwright/day-31/`。用例不发运、不把模拟设备连接到外部。
+
+## Day 33 历史时间轴与实时隔离
+
+全新隔离 QA 登录管理员后，运行 `run-code --filename scripts/browser-checks/day33-replay.js`。真实授权 API 准备车队、任务与封路；比较顺播与拖动的同帧摘要，检查回放不写入、不重新打开实时连接。通过仅在浏览器丢弃一条已收到的历史事件，验证缺段拒绝显示；返回实时读到期间新增的预占。截图留本地。

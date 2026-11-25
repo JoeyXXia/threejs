@@ -4,6 +4,7 @@ import { Link, Navigate, NavLink, Route, Routes, useLocation, useParams } from '
 import { useQueryClient } from '@tanstack/react-query';
 import { ApiError, api } from './api';
 import { WarehouseView } from './warehouse/WarehouseView';
+import { ReplayView } from './warehouse/ReplayView';
 import { InboundView } from './inbound/InboundView';
 import { OutboundView } from './outbound/OutboundView';
 import { CountView } from './count/CountView';
@@ -26,7 +27,7 @@ function parseSession(value: unknown): Session {
 const warehousePath = (warehouse: Warehouse) => `/warehouses/${warehouse.spaceId}/${warehouse.id}`;
 
 function WarehouseRoute({ session, onUnauthorized, page = 'scene' }: {
-  session: Session; onUnauthorized: () => void; page?: 'scene' | 'inbound' | 'outbound' | 'count' | 'wms';
+  session: Session; onUnauthorized: () => void; page?: 'scene' | 'inbound' | 'outbound' | 'count' | 'wms' | 'replay';
 }) {
   const { spaceId, warehouseId } = useParams();
   const { search } = useLocation();
@@ -36,6 +37,7 @@ function WarehouseRoute({ session, onUnauthorized, page = 'scene' }: {
     <Link to={warehousePath(warehouse)}>返回仓库场景</Link></section>;
   const props = { userId: session.user.id, spaceId: warehouse.spaceId, warehouseId: warehouse.id, name: warehouse.name, onUnauthorized };
   const key = `${session.user.id}:${warehouse.spaceId}:${warehouse.id}`;
+  if (page === 'replay') return <ReplayView key={key} {...props} />;
   if (page === 'scene') {
     const params = new URLSearchParams(search);
     const warning = params.get('warning');
@@ -142,6 +144,7 @@ export function App() {
       </section>
       <div className="dashboard"><aside><p className="nav-label">获授权仓库</p><nav aria-label="主导航">
         {session.warehouses.map((warehouse) => <NavLink key={warehouse.id} to={warehousePath(warehouse)}>{warehouse.name}<small>{warehouse.role}</small></NavLink>)}
+        {session.warehouses.map((warehouse) => <NavLink key={`replay:${warehouse.id}`} to={`${warehousePath(warehouse)}/replay`}>{warehouse.name} 历史回放</NavLink>)}
         {session.warehouses.map((warehouse) => <NavLink key={`inbound:${warehouse.id}`} to={`${warehousePath(warehouse)}/inbound`}>{warehouse.name} 入库与质检</NavLink>)}
         {session.warehouses.map((warehouse) => <NavLink key={`outbound:${warehouse.id}`} to={`${warehousePath(warehouse)}/outbound`}>{warehouse.name} 出库与预占</NavLink>)}
         {session.warehouses.map((warehouse) => <NavLink key={`count:${warehouse.id}`} to={`${warehousePath(warehouse)}/count`}>{warehouse.name} 盘点与审批</NavLink>)}
@@ -151,6 +154,7 @@ export function App() {
       <Routes>
         <Route path="/" element={<Navigate replace to={session.warehouses[0] ? warehousePath(session.warehouses[0]) : '/account'} />} />
         <Route path="/warehouses/:spaceId/:warehouseId" element={<WarehouseRoute session={session} onUnauthorized={forgetSession} />} />
+        <Route path="/warehouses/:spaceId/:warehouseId/replay" element={<WarehouseRoute session={session} onUnauthorized={forgetSession} page="replay" />} />
         <Route path="/warehouses/:spaceId/:warehouseId/inbound" element={<WarehouseRoute session={session} onUnauthorized={forgetSession} page="inbound" />} />
         <Route path="/warehouses/:spaceId/:warehouseId/outbound" element={<WarehouseRoute session={session} onUnauthorized={forgetSession} page="outbound" />} />
         <Route path="/warehouses/:spaceId/:warehouseId/count" element={<WarehouseRoute session={session} onUnauthorized={forgetSession} page="count" />} />
