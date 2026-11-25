@@ -4,12 +4,13 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { expect, it, vi } from 'vitest';
 import { WarehouseView } from './WarehouseView';
 import { useRealtimeSnapshot } from './useRealtimeSnapshot';
+import { PoseBuffer } from './pose-buffer';
 
 vi.mock('./useRealtimeSnapshot');
 
 it('a denied warehouse hides scene and inventory totals and exposes the denial', () => {
   vi.mocked(useRealtimeSnapshot).mockReturnValue({
-    data: undefined, status: 'denied', error: new Error('当前会话没有仓库读取权限。'), updatedAt: 0, retry: () => {},
+    data: undefined, status: 'denied', error: new Error('当前会话没有仓库读取权限。'), updatedAt: 0, retry: () => {}, poses: new PoseBuffer(),
   });
   const client = new QueryClient();
   const html = renderToStaticMarkup(createElement(QueryClientProvider, { client }, createElement(WarehouseView, {

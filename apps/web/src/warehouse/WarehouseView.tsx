@@ -23,6 +23,10 @@ type Props = { userId: string; spaceId: string; warehouseId: string; name: strin
 
 export function WarehouseView({ userId, spaceId, warehouseId, name, onUnauthorized, initialBatchId = '', warning = null }: Props) {
   const query = useRealtimeSnapshot({ userId, spaceId, warehouseId, onUnauthorized });
+  const host = useRef<HTMLElement>(null), commits = useRef(0);
+  useEffect(() => {
+    if (import.meta.env.DEV && host.current) host.current.dataset.reactCommits = String(++commits.current);
+  });
   const data = query.data;
   const [heatMode, setHeatMode] = useState<HeatMode>('off');
   const operationsQuery = useOperations(userId, spaceId, warehouseId, Boolean(data));
@@ -59,7 +63,7 @@ export function WarehouseView({ userId, spaceId, warehouseId, name, onUnauthoriz
       store.getState().focusLocation(targetId);
     }
   }, [store, targetId]);
-  return <section className="workspace" aria-label="仓库场景">
+  return <section ref={host} className="workspace" aria-label="仓库场景">
     <div className="view-heading"><div><p className="eyebrow">数据驱动 / 软件模拟设备</p><h1>{name}</h1></div>
       <button disabled={query.status === 'denied'} onClick={query.retry}>刷新数据</button></div>
     <RealtimeStatus status={query.status} after={data?.watermark} />
@@ -128,7 +132,8 @@ export function WarehouseView({ userId, spaceId, warehouseId, name, onUnauthoriz
             <Suspense fallback={<p role="status" className="scene-fallback">正在载入 3D 场景…</p>}><WarehouseScene
               snapshot={data} fleet={data.fleet?.enabled ? data.fleet : null} robot={data.simulation?.runtime ?? null} views={views} showZones={ui.showZones} showServiceCells={ui.showServiceCells} selectedLocationId={selected?.location.id ?? null}
               zoneFilter={ui.zoneFilter} cameraMode={ui.cameraMode} cameraRequest={cameraRequest} onSelect={ui.selectLocation}
-              heat={heatMode === 'off' ? null : { mode: heatMode, cells: heatCells }} /></Suspense>
+              heat={heatMode === 'off' ? null : { mode: heatMode, cells: heatCells }}
+              visual={{ poses: query.poses, watermark: data.watermark, epoch: data.fleet.epoch }} /></Suspense>
           </SceneBoundary></div> : <InventoryTable views={views} selectedId={ui.selectedLocationId} onSelect={ui.selectLocation} onFocus={ui.focusLocation} />}
           <ul className="zone-legend" aria-label="库存状态图例">{Object.entries(inventoryAppearance).map(([key, entry]) => <li key={key}><i style={{ background: entry.color }} />{entry.name}</li>)}</ul>
           <p className="view-note">同位多状态按待检、预占、可用优先显示；不可分配包含到期库存。颜色同时配文字和数量。</p>

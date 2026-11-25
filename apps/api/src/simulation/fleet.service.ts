@@ -332,11 +332,12 @@ export class FleetService implements OnModuleInit, OnModuleDestroy {
           fleet: json({ format: 1, state: p.proposal.state, from: e.state.robots.map((r) => r.simulation.robot.position) }) } });
         const previousAlerts = new Set(fleetAlerts(e.state).map((a) => a.key));
         const seq = await appendWarehouseEvent(tx, p.scope, 'FLEET_TICK', { tick: p.proposal.state.tick,
-          layoutId: p.proposal.state.robots[0]!.simulation.map.layoutId, tickMs: p.proposal.state.robots[0]!.simulation.tickMs,
+          layoutId: p.proposal.state.robots[0]!.simulation.map.layoutId, layoutVersion: p.proposal.state.robots[0]!.simulation.map.version,
+          tickMs: p.proposal.state.robots[0]!.simulation.tickMs,
           newAlerts: fleetAlerts(p.proposal.state).filter((a) => !previousAlerts.has(a.key)),
           resources: p.proposal.state.resources ?? [],
           navigation: navigationOf(p.proposal.state),
-          robots: p.proposal.state.robots.map((r) => ({ id: r.id, cell: r.simulation.robot.position, battery: r.simulation.robot.battery, charge: r.charge ?? null, taskId: r.work?.taskId ?? null, phase: r.work?.phase ?? 'IDLE', waitTicks: r.waitTicks, waitReason: r.waitReason, resourceWaitId: r.resourceWaitId ?? null, blockerId: r.blockerId, navigationIssue: r.navigationIssue ?? null, deviceFault: r.deviceFault ?? null })) });
+          robots: p.proposal.state.robots.map((r, i) => ({ id: r.id, from: e.state.robots[i]!.simulation.robot.position, cell: r.simulation.robot.position, battery: r.simulation.robot.battery, charge: r.charge ?? null, taskId: r.work?.taskId ?? null, phase: r.work?.phase ?? 'IDLE', waitTicks: r.waitTicks, waitReason: r.waitReason, resourceWaitId: r.resourceWaitId ?? null, blockerId: r.blockerId, navigationIssue: r.navigationIssue ?? null, deviceFault: r.deviceFault ?? null })) });
         const state = p.proposal.state, map = state.robots[0]!.simulation.map;
         const completedIds = state.robots.flatMap((r) => r.work && !claims.some((c) => c.id === r.work!.taskId) ? [r.work.taskId] : []);
         const previous = completedIds.length ? await tx.fleetClaim.findMany({ where: { ...p.scope, id: { in: completedIds } } }) : [];

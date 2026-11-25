@@ -41,13 +41,17 @@ function request(path, Cookie, body) {
     Cookie, 'Content-Type': 'application/json', 'X-Requested-With': 'WarehouseTwin',
   }, body: body && JSON.stringify(body) });
 }
-function peer(cookie, claimedOrigin = origin) {
+function peer(cookie, claimedOrigin = origin, autoAck = true) {
   const client = io(apiUrl, { forceNew: true, autoConnect: false, reconnection: false,
     transports: ['websocket'], extraHeaders: { Origin: claimedOrigin, ...(cookie && { Cookie: cookie }) } });
-  const events = [];
-  client.on('warehouse:events', (value, ack) => { events.push(...value.events.map((event) => ({ ...event, spaceId: value.spaceId, warehouseId: value.warehouseId }))); ack(true); });
+  const events = [], batches = [];
+  client.on('warehouse:events', (value, ack) => {
+    batches.push(value);
+    events.push(...value.events.map((event) => ({ ...event, spaceId: value.spaceId, warehouseId: value.warehouseId })));
+    if (autoAck) ack(true);
+  });
   clients.add(client);
-  return { client, events, async start() {
+  return { client, events, batches, async start() {
     const result = new Promise((resolve, reject) => { client.once('connect', resolve); client.once('connect_error', reject); });
     client.connect(); await result;
   }, sub: (payload = scope) => client.timeout(2500).emitWithAck('warehouse:subscribe', payload) };
@@ -440,4 +444,35 @@ test('Day32 single-robot history captures post-ledger inventory, cadence anchors
       carrying: { tick: carrying.tick, inventory: carrying.state.inventory }, replacementAnchor: next.tick, afterLastTick: tail.events.at(-1).kind,
     }));
   } finally { await service.onModuleDestroy(); }
+});
+
+test('Day34 slow telemetry peer gets one bounded position slot and is revoked while waiting for ACK', { timeout: 15000 }, async () => {
+  const { realtimeBatchSchema } = require('../../packages/contracts');
+  const cookie = await login('viewer@demo.local');
+  const slow = peer(cookie, origin, false);
+  await slow.start();
+  const before = await db.warehouseRuntime.findUniqueOrThrow({ where: { warehouseId: scope.warehouseId } });
+  const after = Math.max(0, before.seq - 8);
+  assert.deepEqual(await slow.sub({ ...scope, after, telemetry: true }), { ok: true, after });
+  const batch = realtimeBatchSchema.parse(await until(() => slow.batches[0]));
+  assert.ok(batch.events.length > 1 && batch.events.length <= 100);
+  assert.deepEqual(batch.events.map((event) => event.seq), batch.events.map((_, n) => after + 1 + n));
+  assert.equal(batch.pose.seq, batch.events.at(-1).seq);
+  const omitted = batch.events.filter((event) => event.kind === 'FLEET_TICK' && event.payload === null);
+  assert.ok(omitted.length > 1);
+  const authoritative = await (await request(endpoint + '/simulation/events?after=' + after, cookie)).json();
+  assert.ok(authoritative.events.find((e) => e.seq === omitted[0].seq).payload.robots.length === 3);
+  await delay(650);
+  assert.equal(slow.batches.length, 1);
+  const closed = once(slow.client, 'disconnect', { signal: AbortSignal.timeout(2300) });
+  const revoke = once(slow.client, 'warehouse:revoked', { signal: AbortSignal.timeout(2300) });
+  await db.warehouseAccess.delete({ where: { userId_spaceId_warehouseId: { ...scope, userId: viewerId } } });
+  try {
+    assert.deepEqual(await revoke, [404]);
+    await closed;
+    assert.equal(slow.batches.length, 1);
+  } finally { await db.warehouseAccess.create({ data: { ...scope, userId: viewerId, role: 'VIEWER' } }); }
+  require('node:fs').writeFileSync('reports/day34-telemetry.json', JSON.stringify({
+    notifications: batch.events.length, omittedTickPayloads: omitted.length, poseSamples: 1, pagesBeforeRevocation: slow.batches.length,
+  }));
 });

@@ -5,6 +5,7 @@ import { realtimeAckSchema, realtimeBatchSchema, realtimeSnapshotSchema, validat
 import type { RealtimeSnapshot } from '@warehouse-twin/contracts';
 import { api, ApiError } from '../api';
 import { EventCursor, acceptsSnapshot } from './realtime-sync';
+import { PoseBuffer, snapshotSampleMs } from './pose-buffer';
 
 type Status = 'syncing' | 'connected' | 'offline' | 'stale' | 'denied';
 type Scope = { userId: string; spaceId: string; warehouseId: string; onUnauthorized: () => void };
@@ -15,6 +16,7 @@ export function useRealtimeSnapshot({ userId, spaceId, warehouseId, onUnauthoriz
   const client = useQueryClient();
   const [status, setStatus] = useState<Status>('syncing');
   const [error, setError] = useState<Error | null>(null);
+  const [poses] = useState(() => new PoseBuffer());
   const retry = useRef(() => {});
   const key = realtimeKey(userId, spaceId, warehouseId);
   const query = useQuery<RealtimeSnapshot>({ queryKey: key, queryFn: skipToken, gcTime: 0 });
@@ -26,29 +28,43 @@ export function useRealtimeSnapshot({ userId, spaceId, warehouseId, onUnauthoriz
     let controller = new AbortController();
     let cursor: EventCursor | undefined;
     let busy = false, force = false, stopped = false, denied = false;
-    let reconnect: number | undefined;
+    let urgent = false, lastSample = 0;
+    let reconnect: number | undefined, sampleTimer: number | undefined;
     const current = () => client.getQueryData<RealtimeSnapshot>(key);
     function stopGeneration() {
-      controller.abort(); controller = new AbortController(); cursor = undefined; busy = false; force = false;
+      controller.abort(); controller = new AbortController(); cursor = undefined; busy = false; force = false; urgent = false;
+      window.clearTimeout(sampleTimer); sampleTimer = undefined;
     }
     function refuse(unauthorized: boolean) {
       denied = true; window.clearTimeout(reconnect); stopGeneration(); socket.disconnect();
-      client.setQueryData(key, null);
+      poses.clear(); client.setQueryData(key, null);
       setStatus('denied'); setError(new Error('当前会话没有仓库读取权限。'));
       if (unauthorized) onUnauthorized();
     }
     function reconnectFresh() {
       stopGeneration(); socket.disconnect();
       // Old and replacement databases can reuse numbers; do not mix their generations.
-      client.setQueryData(key, null);
+      poses.clear(); client.setQueryData(key, null);
       setStatus('syncing'); setError(null);
       if (!stopped && !denied && navigator.onLine) socket.connect();
+    }
+    function schedule(immediate = false) {
+      urgent ||= immediate;
+      if (!cursor || busy || stopped || denied) return;
+      if (!force && !cursor.hasGap && (current()?.watermark ?? -1) >= cursor.after) { urgent = false; return; }
+      if (urgent || force || cursor.hasGap) {
+        window.clearTimeout(sampleTimer); sampleTimer = undefined; void pump(); return;
+      }
+      if (sampleTimer === undefined) sampleTimer = window.setTimeout(() => {
+        sampleTimer = undefined; void pump();
+      }, Math.max(0, snapshotSampleMs - (performance.now() - lastSample)));
     }
     async function pump() {
       if (!cursor || busy || stopped || denied) return;
       if (!force && !cursor.hasGap && (current()?.watermark ?? -1) >= cursor.after) return;
       const queue = cursor, { signal } = controller;
       busy = true;
+      urgent = false;
       let success = false;
       let readingHistory = false;
       try {
@@ -67,6 +83,7 @@ export function useRealtimeSnapshot({ userId, spaceId, warehouseId, onUnauthoriz
         if (queue.hasGap) { reconnectFresh(); return; }
         const minimum = queue.after;
         force = false;
+        lastSample = performance.now();
         const snapshot = realtimeSnapshotSchema.parse(await api(path + '/snapshot', 'GET', undefined, signal));
         signal.throwIfAborted();
         validateSnapshot(snapshot.layout, snapshot.inventory, spaceId, warehouseId);
@@ -87,7 +104,7 @@ export function useRealtimeSnapshot({ userId, spaceId, warehouseId, onUnauthoriz
       } finally {
         if (!signal.aborted) {
           busy = false;
-          if (success) void pump();
+          if (success) schedule();
         }
       }
     }
@@ -96,11 +113,11 @@ export function useRealtimeSnapshot({ userId, spaceId, warehouseId, onUnauthoriz
       const { signal } = controller;
       const after = current()?.watermark;
       setStatus('syncing'); setError(null);
-      socket.timeout(5000).emit('warehouse:subscribe', { spaceId, warehouseId, after }, (failure: unknown, value: unknown) => {
+      socket.timeout(5000).emit('warehouse:subscribe', { spaceId, warehouseId, after, telemetry: true }, (failure: unknown, value: unknown) => {
         if (signal.aborted || stopped) return;
         const ack = realtimeAckSchema.safeParse(value);
         if (!failure && ack.success && ack.data.ok && (after === undefined || after === ack.data.after)) {
-          cursor = new EventCursor(ack.data.after); force = true; void pump(); return;
+          cursor = new EventCursor(ack.data.after); force = true; schedule(true); return;
         }
         if (ack.success && !ack.data.ok) {
           if (ack.data.code === 'UNAUTHORIZED' || ack.data.code === 'NOT_FOUND') { refuse(ack.data.code === 'UNAUTHORIZED'); return; }
@@ -117,7 +134,12 @@ export function useRealtimeSnapshot({ userId, spaceId, warehouseId, onUnauthoriz
       reply(true);
       if (!bounded) { reconnectFresh(); return; }
       if (cursor.hasGap) setStatus('syncing');
-      void pump();
+      const pose = batch.data.pose, baseline = current(), last = batch.data.events.at(-1);
+      if (pose && baseline && !cursor.hasGap && pose.seq === last?.seq && pose.tick === last.tick && pose.epoch === last.epoch
+        && pose.seq <= cursor.after && last.kind === (pose.mode === 'FLEET' ? 'FLEET_TICK' : 'SIM_TICK')) {
+        poses.offer(pose, baseline, performance.now());
+      }
+      schedule(batch.data.events.some((e) => (e.kind !== 'FLEET_TICK' && e.kind !== 'SIM_TICK') || e.payload !== null));
     });
     socket.on('warehouse:reset', reconnectFresh);
     socket.on('warehouse:revoked', (code: number) => refuse(code === 401));
@@ -135,7 +157,7 @@ export function useRealtimeSnapshot({ userId, spaceId, warehouseId, onUnauthoriz
     const online = () => { if (!denied && !stopped) { setStatus('syncing'); socket.connect(); } };
     retry.current = () => {
       if (denied) return;
-      if (cursor && socket.connected) { force = true; setStatus('syncing'); void pump(); }
+      if (cursor && socket.connected) { force = true; setStatus('syncing'); schedule(true); }
       else { socket.disconnect(); online(); }
     };
     window.addEventListener('offline', offline);
@@ -144,9 +166,9 @@ export function useRealtimeSnapshot({ userId, spaceId, warehouseId, onUnauthoriz
     return () => {
       stopped = true; stopGeneration(); window.clearTimeout(reconnect);
       window.removeEventListener('offline', offline); window.removeEventListener('online', online);
-      socket.removeAllListeners(); socket.disconnect(); retry.current = () => {};
+      socket.removeAllListeners(); socket.disconnect(); poses.clear(); retry.current = () => {};
     };
-  }, [client, onUnauthorized, spaceId, userId, warehouseId]);
+  }, [client, onUnauthorized, poses, spaceId, userId, warehouseId]);
 
-  return { data: query.data ?? undefined, updatedAt: query.dataUpdatedAt, status, error, retry: () => retry.current() };
+  return { data: query.data ?? undefined, updatedAt: query.dataUpdatedAt, status, error, retry: () => retry.current(), poses };
 }

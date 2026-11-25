@@ -5,13 +5,18 @@ import { Group, MeshStandardMaterial } from 'three';
 import type { LayoutResponse, RobotSnapshot } from '@warehouse-twin/contracts';
 import { cellCenter } from './coordinates';
 import { confirmedPose } from './robot-pose';
+import { poseMatches, type PoseBuffer } from './pose-buffer';
 
-export function RobotModel({ snapshot, grid }: { snapshot: RobotSnapshot; grid: LayoutResponse['layoutVersion'] }) {
+export function RobotModel({ snapshot, grid, visual }: {
+  snapshot: RobotSnapshot; grid: LayoutResponse['layoutVersion']; visual: { poses: PoseBuffer; watermark: number; epoch: number } | undefined;
+}) {
   const mesh = useRef<Group>(null);
   const material = useRef<MeshStandardMaterial>(null);
   const sample = useRef({ snapshot, receivedAt: performance.now() });
   const invalidate = useThree((s) => s.invalidate);
   const canvas = useThree((s) => s.gl.domElement);
+  const poses = visual?.poses;
+  useEffect(() => poses?.subscribe(invalidate), [poses, invalidate]);
   useEffect(() => () => {
     for (const name of ['robotTask', 'robotX', 'robotZ', 'robotTick', 'robotStale']) delete canvas.dataset[name];
   }, [canvas]);
@@ -25,7 +30,14 @@ export function RobotModel({ snapshot, grid }: { snapshot: RobotSnapshot; grid: 
   }, [snapshot, invalidate]);
   useFrame(() => {
     const now = performance.now();
-    const pose = confirmedPose(sample.current.snapshot, sample.current.receivedAt, now);
+    const latest = poses?.read();
+    const entry = visual && latest?.pose.mode === 'SINGLE' && poseMatches(latest.pose, grid, visual.epoch, snapshot.tick, 0, visual.watermark)
+      && latest.pose.robots[0]?.taskId === snapshot.taskId ? latest : undefined;
+    const move = entry?.pose.robots[0];
+    const position = move && entry ? { ...sample.current.snapshot, tick: entry.pose.tick,
+      from: entry.snap ? move.to : move.from, to: move.to, direction: move.direction ?? snapshot.direction } : sample.current.snapshot;
+    const receivedAt = entry?.at ?? sample.current.receivedAt;
+    const pose = confirmedPose(position, receivedAt, now);
     if (mesh.current) {
       mesh.current.position.set(grid.origin.x + (pose.x + .5) * grid.cellSize, .24, grid.origin.z + (pose.z + .5) * grid.cellSize);
       mesh.current.rotation.y = pose.angle;
@@ -35,9 +47,9 @@ export function RobotModel({ snapshot, grid }: { snapshot: RobotSnapshot; grid: 
     canvas.dataset.robotTask = snapshot.taskId;
     canvas.dataset.robotX = pose.x.toFixed(4);
     canvas.dataset.robotZ = pose.z.toFixed(4);
-    canvas.dataset.robotTick = String(sample.current.snapshot.tick);
+    canvas.dataset.robotTick = String(position.tick);
     canvas.dataset.robotStale = String(pose.stale);
-    if (now - sample.current.receivedAt <= 1600) invalidate();
+    if (now - receivedAt <= 1600) invalidate();
   });
   const points = snapshot.route.map((p) => { const [x, , z] = cellCenter(grid, p.x, p.z); return [x, .08, z] as [number, number, number]; });
   return <>

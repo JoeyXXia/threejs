@@ -2,6 +2,8 @@
 
 WMS 业务驱动的智能仓库数字孪生演示系统。样本为合成数据，库存与流水由 PostgreSQL 持久化，设备为软件模拟。
 
+Day34 区分实时位姿采样与权威业务事件：新版 Socket 每页最多一个最新位姿，浏览器单槽直接更新模型，业务事件仍按 seq 恢复。见 [Day34 验收](reports/day-34-acceptance.md)。
+
 Day33 提供独立只读历史回放：支持拖动、暂停、倍速和任务高亮；使用旧布局和确认帧，不把实时更新混入历史。见 [Day33 验收](reports/day-33-acceptance.md)。
 
 Day32 增加历史基线、紧凑轨迹与只读分页接口，保留旧布局并按提交序号读取全车上下文。已有本地库需运行 `pnpm db:migrate`。接口和限制见 [Day32 验收](reports/day-32-acceptance.md)；本版不含时间轴界面。

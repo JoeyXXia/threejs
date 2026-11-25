@@ -7,9 +7,10 @@ import { webOrigins } from '../configure';
 import { DatabaseService } from '../database.service';
 import type { Prisma } from '@warehouse-twin/database';
 import type { WarehouseScope } from '../warehouse-state';
+import { projectTelemetry } from './telemetry';
 
-type Subscription = { scope: WarehouseScope; after: number };
-type Connection = { opened: number; busy: boolean; subscription?: Subscription };
+type Subscription = { scope: WarehouseScope; after: number; telemetry: boolean };
+type Connection = { opened: number; busy: boolean; awaitingAck?: boolean; checking?: boolean; subscription?: Subscription };
 const period = 250;
 
 @Injectable()
@@ -42,6 +43,7 @@ export class WarehouseGateway implements OnModuleDestroy {
     });
     this.timer = setInterval(() => {
       for (const [socket, state] of this.connections) {
+        if (state.awaitingAck && state.subscription && !state.checking) void this.recheck(socket, state, state.subscription.scope);
         if (state.busy) continue;
         if (state.subscription) void this.relay(socket, state, state.subscription);
         else if (Date.now() - state.opened > 10000) socket.disconnect(true);
@@ -56,6 +58,20 @@ export class WarehouseGateway implements OnModuleDestroy {
       where: { userId_spaceId_warehouseId: { userId, ...scope } }, select: { role: true },
     });
     if (!access) throw new NotFoundException();
+  }
+
+  private revoke(socket: Socket, error: unknown) {
+    if (socket.connected && error instanceof HttpException && [401, 404].includes(error.getStatus())) {
+      socket.emit('warehouse:revoked', error.getStatus());
+      socket.disconnect(true);
+    }
+  }
+
+  private async recheck(socket: Socket, state: Connection, scope: WarehouseScope) {
+    state.checking = true;
+    try { await this.db.$transaction((tx) => this.authorize(tx, socket, scope), { isolationLevel: 'RepeatableRead' }); }
+    catch (error) { this.revoke(socket, error); }
+    finally { state.checking = false; }
   }
 
   private async subscribe(socket: Socket, state: Connection, input: unknown, reply: (ack: RealtimeAck) => void) {
@@ -82,7 +98,7 @@ export class WarehouseGateway implements OnModuleDestroy {
       await socket.join(`warehouse:${scope.spaceId}:${scope.warehouseId}`);
       if (!socket.connected) return;
       reply(result);
-      state.subscription = { scope, after: result.after };
+      state.subscription = { scope, after: result.after, telemetry: parsed.data.telemetry === true };
     } catch (error) {
       const status = error instanceof HttpException ? error.getStatus() : 500;
       reply({ ok: false, code: status === 401 ? 'UNAUTHORIZED' : status === 404 ? 'NOT_FOUND' : 'UNAVAILABLE' });
@@ -107,18 +123,17 @@ export class WarehouseGateway implements OnModuleDestroy {
       if (!events) { socket.emit('warehouse:reset'); socket.disconnect(true); return; }
       if (events.length === 0) return;
       // One in-flight page per subscription. A slow peer cannot queue unlimited pages.
+      const page = events.map((event) => ({ ...event, createdAt: event.createdAt.toISOString() }));
+      state.awaitingAck = true;
       const handled = await socket.timeout(4000).emitWithAck('warehouse:events', {
-        ...scope, events: events.map((event) => ({ ...event, createdAt: event.createdAt.toISOString() })),
+        ...scope, ...(subscription.telemetry ? projectTelemetry(page) : { events: page }),
       }).catch(() => false);
       if (handled !== true) socket.disconnect(true);
       else subscription.after = events.at(-1)!.seq;
     } catch (error) {
-      if (error instanceof HttpException && [401, 404].includes(error.getStatus())) {
-        socket.emit('warehouse:revoked', error.getStatus());
-        socket.disconnect(true);
-      }
+      this.revoke(socket, error);
       // A transient read error keeps the cursor; the next sweep tries the same page.
-    } finally { state.busy = false; }
+    } finally { state.busy = false; state.awaitingAck = false; }
   }
 
   onModuleDestroy() {

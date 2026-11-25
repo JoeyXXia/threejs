@@ -10,7 +10,7 @@ const totals = { onHand: quantity, reserved: quantity, available: quantity };
 export const warehouseSocketPath = '/socket.io';
 const eventCursor = quantity.max(2147483647);
 const realtimeScope = { spaceId: id, warehouseId: id };
-export const realtimeSubscribeSchema = z.strictObject({ ...realtimeScope, after: eventCursor.optional() });
+export const realtimeSubscribeSchema = z.strictObject({ ...realtimeScope, after: eventCursor.optional(), telemetry: z.boolean().optional() });
 export const realtimeAckSchema = z.union([
   z.object({ ok: z.literal(true), after: eventCursor }),
   z.object({ ok: z.literal(false), code: z.enum(['BAD_REQUEST', 'UNAUTHORIZED', 'NOT_FOUND', 'CURSOR_AHEAD', 'CURSOR_EXPIRED', 'BUSY', 'UNAVAILABLE']) }),
@@ -19,9 +19,17 @@ const warehouseEvent = z.object({
   seq: eventCursor.positive(), version: eventCursor.nullable(), epoch: eventCursor.nullable(), tick: eventCursor,
   kind: z.string(), payload: z.unknown(), createdAt: z.string().datetime(),
 });
+export const telemetryPoseSchema = z.object({
+  seq: eventCursor.positive(), tick: eventCursor, epoch: eventCursor, layoutId: id, layoutVersion: quantity.positive(),
+  mode: z.enum(['SINGLE', 'FLEET']), revision: quantity,
+  robots: z.array(z.object({ id: z.string(), taskId: id.nullable(), from: point, to: point,
+    direction: z.enum(['N', 'E', 'S', 'W']).optional() })).min(1).max(5),
+});
+export type TelemetryPose = z.infer<typeof telemetryPoseSchema>;
 export const realtimeBatchSchema = z.object({
   ...realtimeScope,
   events: z.array(warehouseEvent).min(1).max(100),
+  pose: telemetryPoseSchema.optional(),
 });
 export type RealtimeAck = z.infer<typeof realtimeAckSchema>;
 

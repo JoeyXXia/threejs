@@ -10,6 +10,7 @@ import type { CameraMode } from './scene-store';
 import { CameraRig } from './CameraRig';
 import { FleetModels } from './FleetModels';
 import { RobotModel } from './RobotModel';
+import type { PoseBuffer } from './pose-buffer';
 import { heatColor, type HeatCell, type HeatMode } from './operations';
 
 function ContextWatch({ onLost }: { onLost: () => void }) {
@@ -25,9 +26,10 @@ function ContextWatch({ onLost }: { onLost: () => void }) {
 type Props = { snapshot: Pick<WarehouseSnapshot, 'layout'>; fleet?: FleetResponse | null; robot?: RobotSnapshot | null; views: LocationView[]; showZones: boolean; showServiceCells: boolean; selectedLocationId: string | null;
   zoneFilter: ZoneFilter; cameraMode: CameraMode; cameraRequest: { locationId: string | null; sequence: number }; onSelect: (id: string | null) => void;
   heat: { mode: Exclude<HeatMode, 'off'>; cells: HeatCell[] } | null;
-  replay?: { robots: ReplayFrame['state']['robots']; closed: { x: number; z: number }[]; task: string } };
+  replay?: { robots: ReplayFrame['state']['robots']; closed: { x: number; z: number }[]; task: string };
+  visual?: { poses: PoseBuffer; watermark: number; epoch: number } };
 
-export function WarehouseScene({ snapshot, fleet, robot, views, showZones, showServiceCells, selectedLocationId, zoneFilter, cameraMode, cameraRequest, onSelect, heat, replay }: Props) {
+export function WarehouseScene({ snapshot, fleet, robot, views, showZones, showServiceCells, selectedLocationId, zoneFilter, cameraMode, cameraRequest, onSelect, heat, replay, visual }: Props) {
   const [lost, setLost] = useState(false);
   const { layout } = snapshot;
   const grid = layout.layoutVersion;
@@ -114,7 +116,7 @@ export function WarehouseScene({ snapshot, fleet, robot, views, showZones, showS
           </group>;
         })}
       </>}
-      {!replay && fleet && fleet.layoutId === grid.id && fleet.layoutVersion === grid.version && <FleetModels fleet={fleet} grid={grid} />}
-      {!replay && !fleet && robot && robot.layoutId === grid.id && robot.layoutVersion === grid.version && <RobotModel key={robot.taskId} snapshot={robot} grid={grid} />}
+      {!replay && fleet && fleet.layoutId === grid.id && fleet.layoutVersion === grid.version && <FleetModels fleet={fleet} grid={grid} poses={visual?.poses} />}
+      {!replay && !fleet && robot && robot.layoutId === grid.id && robot.layoutVersion === grid.version && <RobotModel key={robot.taskId} snapshot={robot} grid={grid} visual={visual} />}
     </Canvas>;
 }

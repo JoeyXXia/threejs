@@ -282,3 +282,7 @@ pw28 close
 ## Day 33 历史时间轴与实时隔离
 
 全新隔离 QA 登录管理员后，运行 `run-code --filename scripts/browser-checks/day33-replay.js`。真实授权 API 准备车队、任务与封路；比较顺播与拖动的同帧摘要，检查回放不写入、不重新打开实时连接。通过仅在浏览器丢弃一条已收到的历史事件，验证缺段拒绝显示；返回实时读到期间新增的预占。截图留本地。
+
+## Day 34 实时位置采样与订阅清理
+
+全新隔离 QA 登录管理员后，运行 `run-code --filename scripts/browser-checks/day34-telemetry.js`。采样车队 mesh tick、位姿包、仓库快照请求和 React 页面提交数，再连续切仓、进入回放、返回实时、掉线重连，核对活动 Socket 数。慢 ACK 和等待中的撤权另由真实 Node Socket.IO 集成用例驱动。
