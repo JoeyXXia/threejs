@@ -14,5 +14,27 @@ services:
       interval: 3s
       timeout: 3s
       retries: 20
+  redis:
+    image: redis:7.4-alpine
+    profiles: [reports]
+    command: ["redis-server", "--maxmemory-policy", "noeviction"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+  report-worker:
+    profiles: [reports]
+    build:
+      context: ..
+      dockerfile: infra/report-worker.Dockerfile
+    environment:
+      DATABASE_URL: postgresql://warehouse:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in root .env}@postgres:5432/warehouse_twin
+      REPORT_REDIS_HOST: redis
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
 volumes:
   warehouse_pg:

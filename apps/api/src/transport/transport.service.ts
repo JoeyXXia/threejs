@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { Prisma } from '@warehouse-twin/database';
 import { textInput, uuidInput } from '../auth/input';
 import { DatabaseService } from '../database.service';
-import { lockWarehouseState, appendWarehouseEvent } from '../warehouse-state';
+import { lockWarehouseState, appendWarehouseEvent, dispatchEventKind } from '../warehouse-state';
 
 type Scope = { spaceId: string; warehouseId: string; actorId: string };
 type Tx = Prisma.TransactionClient;
@@ -155,7 +155,7 @@ export class TransportService {
         where: { id: orderId }, data: { status: 'DISPATCHED', version: { increment: 1 } },
         select: { id: true, status: true },
       });
-      await this.audit(tx, scope, 'OUTBOUND_DISPATCHED', orderId, note, { status: order.status }, updated);
+      await this.audit(tx, scope, dispatchEventKind, orderId, note, { status: order.status }, updated);
       return updated;
   }
 

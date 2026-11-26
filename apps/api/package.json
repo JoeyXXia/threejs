@@ -6,7 +6,8 @@
     "dev": "tsx watch src/main.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "start": "node dist/main.js"
+    "start": "node dist/main.js",
+    "reports:worker": "node dist/jobs/main.js"
   },
   "dependencies": {
     "@nestjs/common": "12.2.0",
@@ -15,6 +16,7 @@
     "@warehouse-twin/contracts": "workspace:*",
     "@warehouse-twin/database": "workspace:*",
     "@warehouse-twin/simulation": "workspace:*",
+    "bullmq": "5.58.5",
     "reflect-metadata": "0.2.2",
     "rxjs": "7.8.2",
     "socket.io": "4.8.3"

@@ -16,3 +16,4 @@ allowBuilds:
   '@embedded-postgres/windows-x64': true
   '@parcel/watcher': false
   unrs-resolver: false
+  msgpackr-extract: false # BullMQ can use the JavaScript implementation; do not run the optional native installer.

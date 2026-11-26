@@ -1,6 +1,9 @@
 const { after, beforeEach, test } = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
+const { execFileSync, spawn } = require('node:child_process');
+const { once } = require('node:events');
+const { setTimeout: delay } = require('node:timers/promises');
 const { PrismaClient, reconcileWarehouse } = require('../../packages/database');
 const { ids } = require('../../packages/database/seed.cjs');
 const { seedInventory } = require('../../packages/database/seed-inventory.cjs');
@@ -9,6 +12,8 @@ const { TransportService } = require('../../apps/api/dist/transport/transport.se
 const { OutboundService } = require('../../apps/api/dist/outbound/outbound.service');
 const { InventoryController } = require('../../apps/api/dist/inventory.controller');
 const { CountService } = require('../../apps/api/dist/count/count.service');
+const { FleetService } = require('../../apps/api/dist/simulation/fleet.service');
+const { lockWarehouseState } = require('../../apps/api/dist/warehouse-state');
 
 const url = process.env.INBOUND_TEST_DATABASE_URL;
 if (!url || new URL(url).hostname !== '127.0.0.1' || new URL(url).pathname !== '/warehouse_twin_inbound_test') {
@@ -57,6 +62,111 @@ async function assertReconciled() {
     assert.deepEqual(await reconcileReservations(tx), []);
   }, { isolationLevel: 'RepeatableRead' });
 }
+
+async function readyToDispatch() {
+  const o = await order(1);
+  const task = await create(o.allocations[0]);
+  await transport.take(scope, task.id, note);
+  await transport.drop(scope, task.id, note);
+  return o;
+}
+
+const dispatchJobs = () => db.dispatchReportJob.findMany({ where: { warehouseId: scope.warehouseId }, include: { source: true }, orderBy: { sourceSeq: 'asc' } });
+
+test('Day36 committed dispatch and its report intent share the warehouse transaction', async () => {
+  const o = await readyToDispatch();
+  const before = await stock();
+  assert.deepEqual(await dispatchJobs(), []);
+  await assert.rejects(db.$transaction(async (tx) => {
+    await lockWarehouseState(tx, warehouseScope);
+    await transport.dispatchInTransaction(tx, scope, o.id, note);
+    const intent = await tx.dispatchReportJob.findFirstOrThrow({ where: { warehouseId: scope.warehouseId }, include: { source: true } });
+    assert.equal(intent.source.kind, 'OUTBOUND_DISPATCHED');
+    assert.equal(await otherDb.dispatchReportJob.count({ where: { warehouseId: scope.warehouseId } }), 0);
+    assert.equal(await otherDb.warehouseEvent.count({ where: { ...warehouseScope, kind: 'OUTBOUND_DISPATCHED' } }), 0);
+    throw new Error('injected rollback after intent insertion');
+  }), /injected rollback after intent insertion/);
+  assert.equal((await stock()).watermark, before.watermark);
+  assert.deepEqual((await stock()).summary, before.summary);
+  assert.equal(await db.warehouseEvent.count({ where: { ...warehouseScope, kind: 'OUTBOUND_DISPATCHED' } }), 0);
+  assert.deepEqual(await dispatchJobs(), []);
+  const command = { key: randomUUID(), reason: note };
+  await outbound.dispatch(scope, o.id, command);
+  await outbound.dispatch(scope, o.id, command);
+  const [job, extra] = await dispatchJobs();
+  assert.equal(extra, undefined);
+  assert.equal(job.source.kind, 'OUTBOUND_DISPATCHED');
+  assert.equal(job.source.spaceId, scope.spaceId);
+  assert.equal(job.format, 1);
+  assert.equal(job.result, null);
+  assert.equal((await stock()).summary.onHand, before.summary.onHand - 1);
+  await assertReconciled();
+});
+
+test('Day36 actual Redis pause preserves a pending report while WMS and fleet keep committing', {
+  skip: process.env.TEST_DISPATCH_REDIS !== '1', timeout: 65000,
+}, async () => {
+  const container = 'warehouse-day36-' + randomUUID();
+  const docker = (...args) => execFileSync('docker', args, { encoding: 'utf8', timeout: 12000, windowsHide: true }).trim();
+  const wait = async (predicate, label) => {
+    const end = Date.now() + 14000;
+    while (Date.now() < end) { const value = await predicate(); if (value) return value; await delay(100); }
+    throw new Error(label);
+  };
+  let child, paused = false, started = false, childLog = '';
+  const fleet = new FleetService(db);
+  try {
+    docker('run', '--pull=never', '-d', '--rm', '--name', container, '-p', '127.0.0.1::6379', 'redis:7.4-alpine', 'redis-server', '--maxmemory-policy', 'noeviction');
+    started = true;
+    const port = /^127\.0\.0\.1:(\d+)$/m.exec(docker('port', container, '6379/tcp'))?.[1];
+    assert.ok(port);
+    const redisVersion = docker('exec', container, 'redis-server', '--version');
+    child = spawn(process.execPath, ['apps/api/dist/jobs/main.js'], { windowsHide: true,
+      env: { ...process.env, DATABASE_URL: url, REPORT_REDIS_HOST: '127.0.0.1', REPORT_REDIS_PORT: port, REPORT_REDIS_PASSWORD: '' } });
+    for (const stream of [child.stdout, child.stderr]) stream.on('data', (data) => { childLog = (childLog + data).slice(-4096); });
+    const first = await readyToDispatch();
+    await outbound.dispatch(scope, first.id, { key: randomUUID(), reason: note });
+    const processed = await wait(async () => { const [job] = await dispatchJobs(); return job?.completedAt && job; }, 'No healthy queue result');
+    const expected = (job, n) => ({ format: 1, spaceId: scope.spaceId, warehouseId: scope.warehouseId,
+      utcDay: job.source.createdAt.toISOString().slice(0, 10), throughSeq: job.sourceSeq, dispatchedOrders: n });
+    assert.deepEqual(processed.result, expected(processed, 1));
+
+    childLog = '';
+    docker('pause', container); paused = true;
+    const second = await readyToDispatch();
+    await outbound.dispatch(scope, second.id, { key: randomUUID(), reason: note });
+    await fleet.initialize(scope, { count: 3, reason: note });
+    const active = (await order(1)).allocations[0];
+    await fleet.assign(scope, { kind: 'OUTBOUND', robotId: 'robot-2', allocationId: active.id, stagingLocationId: stagingId, reason: note });
+    for (let i = 0; i < 3; i++) { const proposal = await fleet.prepare(scope.warehouseId); assert.ok(proposal); await fleet.commit(proposal); }
+    const tick = (await db.warehouseRuntime.findUniqueOrThrow({ where: { warehouseId: scope.warehouseId } })).tick;
+    assert.equal(tick, 3);
+    assert.equal(await db.warehouseEvent.count({ where: { ...warehouseScope, kind: 'FLEET_TICK' } }), tick);
+    await wait(() => childLog.includes('Dispatch report relay deferred'), 'No relay failure observed while Redis paused');
+    const jobs = await dispatchJobs();
+    assert.equal(jobs.length, 2);
+    assert.equal(jobs[1].completedAt, null);
+    assert.equal(jobs[1].result, null);
+    const offlineStock = (await stock()).summary;
+    assert.equal(offlineStock.onHand, 60);
+    await assertReconciled();
+
+    docker('unpause', container); paused = false;
+    const resumed = await wait(async () => { const [a, b] = await dispatchJobs(); return b?.completedAt && [a, b]; }, 'Outbox did not recover after Redis resumed');
+    assert.deepEqual(resumed[0].result, expected(resumed[0], 1));
+    assert.deepEqual(resumed[1].result, expected(resumed[1], resumed[0].result.utcDay === expected(resumed[1], 0).utcDay ? 2 : 1));
+    assert.deepEqual((await stock()).summary, offlineStock);
+    require('node:fs').writeFileSync('reports/day36-dispatch-queue.json', JSON.stringify({
+      capturedAt: new Date().toISOString(), redisVersion, pendingWhilePaused: 1, committedTicksWhilePaused: tick, offlineStock,
+      reports: resumed.map((job) => job.result), relayFailureObserved: true,
+    }));
+  } finally {
+    if (paused) docker('unpause', container);
+    if (child && child.exitCode === null && child.signalCode === null) { const exited = once(child, 'exit'); child.kill(); await exited; }
+    if (started) docker('rm', '-f', container);
+    await fleet.onModuleDestroy();
+  }
+});
 
 test('10 pieces move through transit and staging; only dispatch reduces warehouse stock', async () => {
   const outboundOrder = await order(10);

@@ -102,7 +102,21 @@ model WarehouseEvent {
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   runtime WarehouseRuntime @relation(fields: [spaceId, warehouseId], references: [spaceId, warehouseId], onDelete: Restrict)
   replayFrame WarehouseReplayFrame?
+  dispatchReportJobs DispatchReportJob[]
   @@id([warehouseId, seq])
+}
+
+model DispatchReportJob {
+  id String @id @default(uuid()) @db.Uuid
+  warehouseId String @db.Uuid
+  sourceSeq Int
+  format Int
+  nextRelayAt DateTime @default(now()) @db.Timestamptz(3)
+  completedAt DateTime? @db.Timestamptz(3)
+  result Json?
+  source WarehouseEvent @relation(fields: [warehouseId, sourceSeq], references: [warehouseId, seq], onDelete: Restrict)
+  @@unique([warehouseId, sourceSeq, format])
+  @@index([completedAt, nextRelayAt, id])
 }
 
 model WarehouseReplayFrame {

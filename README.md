@@ -2,6 +2,8 @@
 
 WMS 业务驱动的智能仓库数字孪生演示系统。样本为合成数据，库存与流水由 PostgreSQL 持久化，设备为软件模拟。
 
+Day36 增加可选的 BullMQ 发运日报 worker。已提交发运在同一 PostgreSQL 事务写入待办；Redis 故障只延迟日报，不阻塞核心 WMS 或模拟。见 [Day36 验收](reports/day-36-acceptance.md)。
+
 Day34 区分实时位姿采样与权威业务事件：新版 Socket 每页最多一个最新位姿，浏览器单槽直接更新模型，业务事件仍按 seq 恢复。见 [Day34 验收](reports/day-34-acceptance.md)。
 
 Day33 提供独立只读历史回放：支持拖动、暂停、倍速和任务高亮；使用旧布局和确认帧，不把实时更新混入历史。见 [Day33 验收](reports/day-33-acceptance.md)。
@@ -52,7 +54,13 @@ pnpm dev
 
 登录账户为 `admin@demo.local`、`operator@demo.local`、`viewer@demo.local`，均只可访问空间 A；`other@demo.local` 只可访问空间 B。密码在本地 `.env` 的 `DEMO_PASSWORD`。seed 必须提供至少 12 字符密码，重复执行不会改写已有密码或仓库资料。不要把 `.env`、会话 Cookie、数据库目录提交到仓库。
 
-如果已有 Docker，替代 `pnpm db:local` 执行 `docker compose --env-file .env -f infra/compose.yaml up -d`。Compose 只含 `postgres:18.6`；同样绑定 127.0.0.1:5432，不能与便携实例同时占用该端口。Compose 数据保存在命名卷，今天未在本机执行验证。
+如果已有 Docker，替代 `pnpm db:local` 执行 `docker compose --env-file .env -f infra/compose.yaml up -d postgres`。基础服务 `postgres:18.6` 绑定 127.0.0.1:5432，不能与便携实例同时占用该端口。Compose 数据保存在命名卷。运行 `pnpm db:migrate` 和 `pnpm seed` 后，可选择在同一个 Compose 项目启用后台日报：
+
+```powershell
+docker compose --env-file .env -f infra/compose.yaml --profile reports up -d --build report-worker
+```
+
+`reports` profile 启动内网 Redis 与独立 worker；默认不启用，不提供外部 Redis 端口。发运后用授权的数据库账号查看 `"DispatchReportJob"` 的 `result` / `completedAt`；值为 `NULL` 表示未完成，不等同于未发运。已存在的历史发运不回填待办。
 
 打开 [前端](http://127.0.0.1:5173)，[API 存活检查](http://127.0.0.1:3000/health)。两端只绑定本机地址。Vite 将 `/api/health` 转发为 API `/health`；不用跨域配置。API 启动时读取根目录 `.env`，也可通过进程环境变量覆盖；修改端口时同时修改 `API_PROXY_TARGET` 并重启服务。
 
