@@ -286,3 +286,25 @@ pw28 close
 ## Day 34 实时位置采样与订阅清理
 
 全新隔离 QA 登录管理员后，运行 `run-code --filename scripts/browser-checks/day34-telemetry.js`。采样车队 mesh tick、位姿包、仓库快照请求和 React 页面提交数，再连续切仓、进入回放、返回实时、掉线重连，核对活动 Socket 数。慢 ACK 和等待中的撤权另由真实 Node Socket.IO 集成用例驱动。
+## Day 35 — 运营回放录像
+
+新开隔离 QA，不使用以前的会话、开发数据库或手工 SQL。脚本只接受固定的 Day35 回环 Web 地址；占用时检查进程归属，不停止别人的环境。
+
+```powershell
+$env:QA_API_PORT='18135'; $env:QA_WEB_PORT='18136'; $env:QA_PG_PORT='18137'
+pnpm qa:browser  # 等 QA READY http://127.0.0.1:18136，结束时在本终端输入 stop
+```
+
+另开终端，从仓库根目录用独立 Chrome 会话登录隔离测试账户，并把视口设置为 1440×1100。录制在登录之后开始；中断的录像不要发布。
+
+```powershell
+New-Item -ItemType Directory -Force output/playwright/day-35 | Out-Null
+function pw35 { npx --no-install --package @playwright/cli playwright-cli -s=warehouse-day35 @args }
+pw35 open http://127.0.0.1:18136 --browser=chrome
+# 按当前快照以 QA 管理员登录，停在有「演示仓库 A ADMIN」的页面。
+pw35 video-start output/playwright/day-35/day-35-demo.webm --size=1440x1100 --fps=25
+try { pw35 run-code --filename scripts/browser-checks/day35-operations-demo.js } finally { pw35 video-stop }
+pw35 close
+```
+
+真实 UI 只提交一次分配；脚本通过独立的授权测试客户端准备单据及变更封锁。断开的是演示浏览器，不是服务器；强制模拟的断线期间后台继续保存预占和解封。检查录像能看到实时任务、封路告警、最后确认快照、重连、归档布局和回到实时。发布件和实测口径见 [Day35 验收](../../reports/day-35-acceptance.md)。

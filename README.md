@@ -16,6 +16,8 @@ Day29 增加仓库场景的 Socket.IO 授权订阅。只转发 PostgreSQL 已提
 
 Day28 归档第 4 周版本 `v0.4-fleet-simulation`。新版[五车录像](reports/day-28-demo.webm)串联封路绕行、通道等待、带货故障/恢复、充电和库内取放对账。见[阶段说明](docs/releases/v0.4-fleet-simulation.md)和[实测报告](reports/day-28-acceptance.md)。没有接入真实设备，也不保证拥堵最终解除。
 
+Day35 的第 5 周[运营录像](reports/day-35-demo.webm)串联实时任务、封路告警、断线恢复与独立只读回放。见 [`v0.5-operations` 阶段说明](docs/releases/v0.5-operations.md)和[实测报告](reports/day-35-acceptance.md)。
+
 Day26 新增车队电量准入、单容量充电与无进展诊断，见 [Day26 验收报告](reports/day-26-acceptance.md) 与 [ADR0017](docs/adr/0017-fleet-energy-and-stall-diagnostics.md)。接单核算空载、载货与回充余量；空载车可申请充电，满电不清实际占格。载货能量不足原地保货，持续等待提示人工检查，不自动解死锁。
 
 Day25 新增步边界设备故障、原任务维修与取货前运输取消，见 [Day25 验收报告](reports/day-25-acceptance.md) 与 [ADR0016](docs/adr/0016-phase-preserving-device-recovery.md)。载货故障显示 NEEDS_RECOVERY，保留TRANSIT/容量/通道许可；维修不重开取放，载货取消409。取货前取消释放业务预占但不挪车、不清设备故障；取消运输保留终态历史，不是出库整单取消/重开，已取消来源不可重新领取。不含 Day26 充电或真实设备控制。

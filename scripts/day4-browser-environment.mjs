@@ -13,17 +13,25 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { createInterface } from 'node:readline';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-// Allow an alternate loopback API port when Windows reserves the default.
-const apiPort = process.env.QA_API_PORT ?? '13004';
-if (!/^\d{1,5}$/.test(apiPort) || Number(apiPort) < 1024 || Number(apiPort) > 65535) throw new Error('Invalid QA_API_PORT');
+// Keep fixture runs independent when another local QA process owns a default port.
+function qaPort(name, fallback) {
+  const value = process.env[name] ?? fallback;
+  if (!/^\d{1,5}$/.test(value) || Number(value) < 1024 || Number(value) > 65535) throw new Error(`Invalid ${name}`);
+  return String(Number(value));
+}
+const apiPort = qaPort('QA_API_PORT', '13004');
+const webPort = qaPort('QA_WEB_PORT', '15174');
+const pgPort = qaPort('QA_PG_PORT', '15434');
+if (new Set([apiPort, webPort, pgPort]).size !== 3) throw new Error('QA ports must be distinct');
 const apiOrigin = `http://127.0.0.1:${apiPort}`;
-const url = `postgresql://warehouse:${randomBytes(24).toString('hex')}@127.0.0.1:15434/warehouse_twin_browser`;
+const webOrigin = `http://127.0.0.1:${webPort}`;
+const url = `postgresql://warehouse:${randomBytes(24).toString('hex')}@127.0.0.1:${pgPort}/warehouse_twin_browser`;
 const env = { ...process.env, DATABASE_URL: url, DEMO_PASSWORD: 'browser-fixture-only-2026',
   NODE_ENV: 'test', API_PORT: apiPort, API_HOST: '127.0.0.1', SESSION_TTL_SECONDS: '3600', SESSION_SECURE: 'false',
-  WEB_ORIGINS: 'http://127.0.0.1:15174', API_PROXY_TARGET: apiOrigin };
+  WEB_ORIGINS: webOrigin, API_PROXY_TARGET: apiOrigin };
 const db = new database.PrismaClient({ datasourceUrl: url });
 const pg = await createPostgres({ databaseDir: mkdtempSync(join(tmpdir(), 'warehouse-twin-browser-')), user: 'warehouse',
-  password: new URL(url).password, port: 15434, persistent: true, onLog: () => {}, onError: () => {},
+  password: new URL(url).password, port: Number(pgPort), persistent: true, onLog: () => {}, onError: () => {},
   authMethod: 'scram-sha-256', initdbFlags: ['--encoding=UTF8', '--locale=C'], postgresFlags: ['-c', 'listen_addresses=127.0.0.1'] });
 const children = [];
 function child(args, cwd = root) {
@@ -81,9 +89,9 @@ try {
     await tx.warehouseAccess.create({ data: { userId: admin.id, spaceId: seeds.ids.spaceA, warehouseId: emptyId, role: 'VIEWER' } });
   }, { timeout: 15000 });
   child(['apps/api/dist/main.js']);
-  child(['apps/web/node_modules/vite/bin/vite.js', 'apps/web', '--host', '127.0.0.1', '--port', '15174', '--strictPort']);
-  await ready(`${apiOrigin}/health`); await ready('http://127.0.0.1:15174');
-  console.log('QA READY http://127.0.0.1:15174 — test account admin@demo.local. Commands: layout-v2, reserve, expire, stop');
+  child(['apps/web/node_modules/vite/bin/vite.js', 'apps/web', '--host', '127.0.0.1', '--port', webPort, '--strictPort']);
+  await ready(`${apiOrigin}/health`); await ready(webOrigin);
+  console.log(`QA READY ${webOrigin} — test account admin@demo.local. Commands: layout-v2, reserve, expire, stop`);
   const input = createInterface({ input: process.stdin });
   for await (const line of input) {
     if (line.trim() === 'layout-v2') { await db.$transaction((tx) => cloneLayout(tx, seeds.ids.warehouseA, 2, true), { timeout: 15000 }); console.log('QA: layout v2 published; R01 moved two grid cells'); }
