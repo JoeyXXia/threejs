@@ -1,7 +1,7 @@
 import { Queue, Worker } from 'bullmq';
 import { PrismaClient } from '@warehouse-twin/database';
 import { setTimeout as delay } from 'node:timers/promises';
-import { dispatchReportQueue, generateDispatchReport, relayDispatchReports, type DispatchReportMessage } from './dispatch-report';
+import { dispatchReportQueue, generateDispatchReport, recordDispatchFailure, relayDispatchReports, reportAttempts, reportBackoffMs, type DispatchReportMessage } from './dispatch-report';
 
 async function run() {
   if (!process.env.DATABASE_URL || !process.env.REPORT_REDIS_HOST) throw new Error('Missing report worker configuration');
@@ -13,8 +13,17 @@ async function run() {
   const queue = new Queue<DispatchReportMessage>(dispatchReportQueue, {
     connection: { ...connection, maxRetriesPerRequest: 1, enableOfflineQueue: false, commandTimeout: 1500 },
   });
-  const worker = new Worker<DispatchReportMessage>(dispatchReportQueue,
-    (job) => generateDispatchReport(db, job.name, job.data, job.id), { connection: { ...connection, maxRetriesPerRequest: null } });
+  const worker = new Worker<DispatchReportMessage>(dispatchReportQueue, async (job) => {
+    try { await generateDispatchReport(db, job.name, job.data, job.id); }
+    catch (error) {
+      const attempts = job.attemptsMade + 1;
+      if (attempts >= (job.opts.attempts ?? 1)) {
+        // If PostgreSQL is unavailable, the relay can reconcile the retained failed Redis job later.
+        await recordDispatchFailure(db, job.data, job.id, attempts).catch(() => undefined);
+      }
+      throw error;
+    }
+  }, { connection: { ...connection, maxRetriesPerRequest: null } });
   const controller = new AbortController();
   let relayFault = false, redisFault = false;
   const redisError = () => {
@@ -34,7 +43,12 @@ async function run() {
   try {
     while (!controller.signal.aborted) {
       try {
-        await relayDispatchReports(db, (name, data, jobId) => queue.add(name, data, { jobId, attempts: 1, removeOnComplete: true }));
+        await relayDispatchReports(db, async (name, data, jobId) => {
+          const job = await queue.add(name, data, { jobId, attempts: reportAttempts,
+            backoff: { type: 'exponential', delay: reportBackoffMs }, removeOnComplete: true, removeOnFail: false });
+          if (await job.getState() !== 'failed') return;
+          return (await queue.getJob(jobId))?.attemptsMade;
+        });
         if (relayFault) console.log('Dispatch report relay recovered');
         relayFault = false;
       } catch {

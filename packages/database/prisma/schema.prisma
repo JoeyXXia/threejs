@@ -112,6 +112,10 @@ model DispatchReportJob {
   sourceSeq Int
   format Int
   nextRelayAt DateTime @default(now()) @db.Timestamptz(3)
+  generation Int @default(0)
+  lastFailedGeneration Int?
+  lastFailureAt DateTime? @db.Timestamptz(3)
+  lastFailureAttempts Int?
   completedAt DateTime? @db.Timestamptz(3)
   result Json?
   source WarehouseEvent @relation(fields: [warehouseId, sourceSeq], references: [warehouseId, seq], onDelete: Restrict)

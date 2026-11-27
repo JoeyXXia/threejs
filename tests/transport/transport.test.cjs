@@ -14,6 +14,7 @@ const { InventoryController } = require('../../apps/api/dist/inventory.controlle
 const { CountService } = require('../../apps/api/dist/count/count.service');
 const { FleetService } = require('../../apps/api/dist/simulation/fleet.service');
 const { lockWarehouseState } = require('../../apps/api/dist/warehouse-state');
+const { dispatchReportQueue, generateDispatchReport, recordDispatchFailure, reportJobId, retryDispatchReport } = require('../../apps/api/dist/jobs/dispatch-report');
 
 const url = process.env.INBOUND_TEST_DATABASE_URL;
 if (!url || new URL(url).hostname !== '127.0.0.1' || new URL(url).pathname !== '/warehouse_twin_inbound_test') {
@@ -165,6 +166,134 @@ test('Day36 actual Redis pause preserves a pending report while WMS and fleet ke
     if (child && child.exitCode === null && child.signalCode === null) { const exited = once(child, 'exit'); child.kill(); await exited; }
     if (started) docker('rm', '-f', container);
     await fleet.onModuleDestroy();
+  }
+});
+
+test('Day37 compare-and-set fencing preserves a report across concurrent and stale deliveries', async () => {
+  const o = await readyToDispatch();
+  await transport.dispatch(scope, o.id, note);
+  const [{ id }] = await dispatchJobs();
+  const message = (generation) => ({ intentId: id, generation });
+  const deliver = (client, generation) => generateDispatchReport(client, dispatchReportQueue, message(generation), reportJobId(id, generation));
+  assert.equal(await retryDispatchReport(db, id, 0), false);
+  await recordDispatchFailure(db, message(0), reportJobId(id, 0), 3);
+  const retried = await Promise.all([retryDispatchReport(db, id, 0), retryDispatchReport(otherDb, id, 0)]);
+  assert.deepEqual(retried.sort(), [false, true]);
+  await deliver(db, 0);
+  await recordDispatchFailure(db, message(0), reportJobId(id, 0), 15);
+  const [pending] = await dispatchJobs();
+  assert.equal(pending.completedAt, null);
+  assert.equal(pending.lastFailedGeneration, 0);
+  assert.equal(pending.lastFailureAttempts, 3);
+  await Promise.all([deliver(db, 1), deliver(otherDb, 1)]);
+  const [done] = await dispatchJobs();
+  assert.equal(done.generation, 1);
+  assert.equal(done.result.dispatchedOrders, 1);
+  assert.ok(done.completedAt);
+  await recordDispatchFailure(db, message(1), reportJobId(id, 1), 3);
+  assert.equal(await retryDispatchReport(db, id, 1), false);
+  assert.deepEqual(await dispatchJobs(), [done]);
+});
+
+test('Day37 real BullMQ failure budget, operator retry and crash-before-ack preserve one result per source', {
+  skip: process.env.TEST_DISPATCH_REDIS !== '1', timeout: 75000,
+}, async () => {
+  const { Queue, Worker } = require('../../apps/api/node_modules/bullmq');
+  const container = 'warehouse-day37-' + randomUUID();
+  const docker = (...args) => execFileSync('docker', args, { encoding: 'utf8', timeout: 12000, windowsHide: true }).trim();
+  const wait = async (predicate, label) => {
+    const end = Date.now() + 20000;
+    while (Date.now() < end) { const value = await predicate(); if (value) return value; await delay(100); }
+    throw new Error(label);
+  };
+  const stop = async (p) => {
+    if (p && p.exitCode === null && p.signalCode === null) { const exited = once(p, 'exit'); p.kill(); await exited; }
+  };
+  let child, crash, queue, crashQueue, replacement, started = false, hasTrigger = false, hasFn = false;
+  try {
+    docker('run', '--pull=never', '-d', '--rm', '--name', container, '-p', '127.0.0.1::6379', 'redis:7.4-alpine'); started = true;
+    const port = /^127\.0\.0\.1:(\d+)$/m.exec(docker('port', container, '6379/tcp'))?.[1];
+    assert.ok(port);
+    const env = { ...process.env, DATABASE_URL: url, REPORT_REDIS_HOST: '127.0.0.1', REPORT_REDIS_PORT: port, REPORT_REDIS_PASSWORD: '' };
+    const connection = { host: '127.0.0.1', port: Number(port) };
+    queue = new Queue(dispatchReportQueue, { connection });
+    await queue.waitUntilReady();
+    const broken = await readyToDispatch();
+    await transport.dispatch(scope, broken.id, note);
+    const [intent] = await dispatchJobs();
+    const initialStock = (await stock()).summary;
+    assert.match(intent.id, /^[\da-f-]{36}$/);
+    await db.$executeRawUnsafe(`CREATE FUNCTION day37_reject_result() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+      IF NEW.id='${intent.id}'::uuid AND NEW."completedAt" IS NOT NULL THEN RAISE EXCEPTION 'Day37 injected report failure'; END IF;
+      RETURN NEW; END $$`); hasFn = true;
+    await db.$executeRawUnsafe('CREATE TRIGGER day37_reject_result BEFORE UPDATE ON "DispatchReportJob" FOR EACH ROW EXECUTE FUNCTION day37_reject_result()'); hasTrigger = true;
+    child = spawn(process.execPath, ['apps/api/dist/jobs/main.js'], { env, stdio: 'ignore', windowsHide: true });
+    const firstId = reportJobId(intent.id, 0);
+    const exhausted = await wait(async () => { const j = await queue.getJob(firstId); return j && await j.isFailed() && j; }, 'BullMQ failure budget not exhausted');
+    assert.equal(exhausted.attemptsMade, 3);
+    assert.deepEqual(exhausted.opts.backoff, { type: 'exponential', delay: 500 });
+    const [failed] = await dispatchJobs();
+    assert.equal(failed.lastFailedGeneration, 0);
+    assert.equal(failed.lastFailureAttempts, 3);
+    assert.ok(failed.lastFailureAt);
+    assert.equal(failed.result, null);
+    const cli = (gen) => execFileSync(process.execPath, ['apps/api/dist/jobs/retry.js', intent.id, String(gen)], { env, stdio: 'pipe', windowsHide: true });
+    await db.$executeRawUnsafe('DROP TRIGGER day37_reject_result ON "DispatchReportJob"'); hasTrigger = false;
+    cli(0);
+    assert.throws(() => cli(0), { status: 2 });
+    const recovered = await wait(async () => { const [j] = await dispatchJobs(); return j.completedAt && j; }, 'Operator retry did not succeed');
+    assert.equal(recovered.generation, 1);
+    assert.equal(recovered.lastFailedGeneration, 0);
+    assert.equal(recovered.result.dispatchedOrders, 1);
+    assert.deepEqual((await stock()).summary, initialStock);
+    await stop(child);
+
+    const second = await readyToDispatch();
+    await transport.dispatch(scope, second.id, note);
+    const [, unacked] = await dispatchJobs();
+    const finalStock = (await stock()).summary;
+    const secondId = reportJobId(unacked.id, 0), data = { intentId: unacked.id, generation: 0 };
+    // An independent test namespace avoids inheriting the production worker's 30s stalled-check lease.
+    const prefix = 'day37-crash';
+    crashQueue = new Queue(dispatchReportQueue, { connection, prefix });
+    const add = () => crashQueue.add(dispatchReportQueue, data, { jobId: secondId, attempts: 3 });
+    await add();
+    crash = spawn(process.execPath, ['tests/transport/report-crash-worker.cjs'], {
+      env: { ...env, TEST_REPORT_JOB_ID: secondId }, stdio: 'ignore', windowsHide: true,
+    });
+    assert.deepEqual(await once(crash, 'exit', { signal: AbortSignal.timeout(12000) }), [73, null]);
+    const committed = (await dispatchJobs())[1];
+    assert.ok(committed.completedAt);
+    assert.equal(await crashQueue.getJobState(secondId), 'active');
+    let deliveries = 0;
+    replacement = new Worker(dispatchReportQueue, async (job) => {
+      assert.equal(job.id, secondId);
+      deliveries++;
+      await generateDispatchReport(otherDb, job.name, job.data, job.id);
+    }, { connection: { ...connection, maxRetriesPerRequest: null }, prefix, stalledInterval: 500, lockDuration: 1200 });
+    replacement.on('error', () => {});
+    await wait(async () => await crashQueue.getJobState(secondId) === 'completed', 'Stalled job not redelivered after crash');
+    assert.equal(deliveries, 1);
+    await crashQueue.remove(secondId);
+    assert.equal(await crashQueue.getJob(secondId), undefined);
+    await add();
+    await wait(async () => await crashQueue.getJobState(secondId) === 'completed', 'Reinserted Redis job did not process');
+    assert.equal(deliveries, 2);
+    assert.deepEqual(await dispatchJobs(), [recovered, committed]);
+    assert.deepEqual((await stock()).summary, finalStock);
+    await assertReconciled();
+    require('node:fs').writeFileSync('reports/day37-dispatch-retry.json', JSON.stringify({ capturedAt: new Date().toISOString(),
+      attempts: exhausted.attemptsMade, generations: [failed.generation, recovered.generation], crashExit: 73,
+      redeliveriesAfterCommit: deliveries, reportCount: 2, reportWatermarks: [recovered.sourceSeq, committed.sourceSeq],
+      reportCounts: [recovered.result.dispatchedOrders, committed.result.dispatchedOrders], finalStock }));
+  } finally {
+    await stop(crash); await stop(child);
+    if (replacement) await replacement.close();
+    if (crashQueue) await crashQueue.close();
+    if (queue) await queue.close();
+    if (started) docker('rm', '-f', container);
+    if (hasTrigger) await db.$executeRawUnsafe('DROP TRIGGER day37_reject_result ON "DispatchReportJob"');
+    if (hasFn) await db.$executeRawUnsafe('DROP FUNCTION day37_reject_result()');
   }
 });
 

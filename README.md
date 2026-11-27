@@ -4,6 +4,8 @@ WMS 业务驱动的智能仓库数字孪生演示系统。样本为合成数据�
 
 Day36 增加可选的 BullMQ 发运日报 worker。已提交发运在同一 PostgreSQL 事务写入待办；Redis 故障只延迟日报，不阻塞核心 WMS 或模拟。见 [Day36 验收](reports/day-36-acceptance.md)。
 
+Day37 为同一发运日报加有限退避重试、数据库失败记录和指定代次重跑。Redis 任务重投不覆盖已完成报告。见 [Day37 验收](reports/day-37-acceptance.md)。
+
 Day34 区分实时位姿采样与权威业务事件：新版 Socket 每页最多一个最新位姿，浏览器单槽直接更新模型，业务事件仍按 seq 恢复。见 [Day34 验收](reports/day-34-acceptance.md)。
 
 Day33 提供独立只读历史回放：支持拖动、暂停、倍速和任务高亮；使用旧布局和确认帧，不把实时更新混入历史。见 [Day33 验收](reports/day-33-acceptance.md)。
@@ -61,6 +63,8 @@ docker compose --env-file .env -f infra/compose.yaml --profile reports up -d --b
 ```
 
 `reports` profile 启动内网 Redis 与独立 worker；默认不启用，不提供外部 Redis 端口。发运后用授权的数据库账号查看 `"DispatchReportJob"` 的 `result` / `completedAt`；值为 `NULL` 表示未完成，不等同于未发运。已存在的历史发运不回填待办。
+
+Day37 升级前先停旧 `report-worker`，运行 `pnpm db:generate`、`pnpm db:migrate` 并重建 worker。若日报未完成且 `lastFailedGeneration` 等于 `generation`，先排除故障，再用授权账号、显式设置目标 `DATABASE_URL`，在构建后执行 `pnpm --filter @warehouse-twin/api reports:retry <待办UUID> <当前失败代次>`。命令不读取隐式 `.env`，不删除 Redis 任务；重复或过期请求退出码为 2 且无写入。
 
 打开 [前端](http://127.0.0.1:5173)，[API 存活检查](http://127.0.0.1:3000/health)。两端只绑定本机地址。Vite 将 `/api/health` 转发为 API `/health`；不用跨域配置。API 启动时读取根目录 `.env`，也可通过进程环境变量覆盖；修改端口时同时修改 `API_PROXY_TARGET` 并重启服务。
 

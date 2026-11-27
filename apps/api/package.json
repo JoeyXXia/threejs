@@ -7,7 +7,8 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "node dist/main.js",
-    "reports:worker": "node dist/jobs/main.js"
+    "reports:worker": "node dist/jobs/main.js",
+    "reports:retry": "node dist/jobs/retry.js"
   },
   "dependencies": {
     "@nestjs/common": "12.2.0",
