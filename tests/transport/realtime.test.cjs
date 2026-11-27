@@ -307,9 +307,22 @@ test('Day32 fleet history keeps all robots, closures and a pinned event horizon 
   const { historyPageSchema } = require('../../packages/contracts');
   const cookie = await login('admin@demo.local');
   const closure = { x: 0, z: 0 };
-  const change = await request(endpoint + '/fleet/navigation', cookie, { cells: [closure], closed: true, expectedRevision: 0, reason: 'Day32 history fixture' });
-  assert.equal(change.status, 201);
-  const changed = await change.json();
+  const command = { cells: [closure], closed: true, expectedRevision: 0, reason: 'Day32 history fixture' };
+  let changed, fenceRetries = 0;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const response = await request(endpoint + '/fleet/navigation', cookie, command);
+    const body = await response.json();
+    if (response.status === 201) { changed = body; break; }
+    // The live runner can legitimately win between map preparation and the fenced write. No other 409 is retryable here.
+    assert.equal(response.status, 409, JSON.stringify(body));
+    assert.equal(body.message, '重规划期间状态/布局变化，请重新读取后重试');
+    const fresh = await request(endpoint + '/fleet', cookie);
+    assert.equal(fresh.status, 200);
+    assert.equal((await fresh.json()).navigation.revision, command.expectedRevision);
+    fenceRetries++;
+    await delay(35);
+  }
+  assert.ok(changed, 'Expected closure to commit after at most six attempts');
   await until(() => db.warehouseReplayFrame.findFirst({ where: { ...scope, seq: { gt: changed.watermark } } }));
   const params = new URLSearchParams({ from: new Date(Date.now() - 60000).toISOString(), to: new Date(Date.now() + 60000).toISOString(), limit: '2' });
   const get = async () => {
@@ -356,7 +369,7 @@ test('Day32 fleet history keeps all robots, closures and a pinned event horizon 
   assert.equal((await request(endpoint + '/history?' + new URLSearchParams({ from: '2026-10-01T00:00:00Z', to: '2026-10-02T00:00:01Z' }), cookie)).status, 400);
   require('node:fs').writeFileSync('reports/day32-fleet-history.json', JSON.stringify({
     capturedAt: new Date().toISOString(), baseline: baseline.seq, through, eventCount: events.length, trackCount: frames.length,
-    robotCount: lastFrame.state.robots.length, navigation,
+    robotCount: lastFrame.state.robots.length, navigation, fenceRetries,
   }));
 });
 
