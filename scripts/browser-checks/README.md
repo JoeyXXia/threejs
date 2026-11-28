@@ -308,3 +308,7 @@ pw35 close
 ```
 
 真实 UI 只提交一次分配；脚本通过独立的授权测试客户端准备单据及变更封锁。断开的是演示浏览器，不是服务器；强制模拟的断线期间后台继续保存预占和解封。检查录像能看到实时任务、封路告警、最后确认快照、重连、归档布局和回到实时。发布件和实测口径见 [Day35 验收](../../reports/day-35-acceptance.md)。
+
+## Day 40 — Runner 与 Socket 故障矩阵
+
+用 `QA_API_PORT=18145`、`QA_WEB_PORT=18146`、`QA_PG_PORT=18147` 启全新的 `pnpm qa:browser`，用独立 Chrome 命名会话打开 `http://127.0.0.1:18146` 并登录隔离管理员。随后使用 Playwright CLI `run-code --filename scripts/browser-checks/day40-fault-matrix.js`。运行后会注销该会话；若重跑须全新隔离库。结束关闭该测试浏览器并在 QA 终端输入 `stop`。不要对开发环境或共用数据库执行。失败矩阵与证据见 [Day40 验收](../../reports/day-40-acceptance.md)。

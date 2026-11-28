@@ -1,4 +1,5 @@
 import { createPostgres } from './portable-postgres.mjs';
+import { verifyDatabaseOutage } from './day40-database-outage.mjs';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -50,6 +51,8 @@ try {
   const inboundEnv = { ...env, DATABASE_URL: inboundDatabaseUrl };
   await run(['node_modules/prisma/build/index.js', 'migrate', 'deploy'], `${root}/packages/database`, inboundEnv);
   await run(['seed.cjs'], `${root}/packages/database`, inboundEnv);
+  // No API workers are running yet; only this isolated integration cluster is stopped.
+  await verifyDatabaseOutage(pg, inboundDatabaseUrl, `${root}/reports/day40-database-outage.json`);
   await pg.createDatabase('warehouse_twin_upgrade_test');
   await run(['scripts/runtime-upgrade-check.mjs'], root, { ...env, UPGRADE_TEST_DATABASE_URL: upgradeDatabaseUrl });
   // The real API starts its own runners; never point it at direct/manual tick fixtures.
